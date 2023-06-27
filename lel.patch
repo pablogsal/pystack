@@ -1,0 +1,208 @@
+From 0f81b2eefe04233bc85a7a888e5fcb4e2cf53d2d Mon Sep 17 00:00:00 2001
+From: Peyton Duncan <dev@peytond.me>
+Date: Tue, 25 Apr 2023 15:32:39 -0600
+Subject: [PATCH 1/6] Initial Make Targets
+
+---
+ Makefile | 9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/Makefile b/Makefile
+index 0dd2d0e..02c33f9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,7 @@
+ PYTHON ?= python
+ CLANG_FORMAT ?= clang-format
+ PRETTIER ?= prettier --no-editorconfig
++DOCKER_IMAGE ?= pystack
+ 
+ # Doc generation variables
+ UPSTREAM_GIT_REMOTE ?= origin
+@@ -34,6 +35,14 @@ install-sdist: dist  ## Install from source distribution
+ test-install:  ## Install with test dependencies
+ 	$(ENV) CYTHON_TEST_MACROS=1 $(PIP_INSTALL) -e . -r requirements-test.txt
+ 
++.PHONY: docker-build
++docker-build:  ## Build the Docker image
++	docker build -t $(DOCKER_IMAGE) .
++
++.PHONY: docker-shell
++docker-shell: docker-build ## Run a shell in the Docker image
++	docker run -it --rm --cap-add SYS_PTRACE -v $(PWD):/pystack $(DOCKER_IMAGE) bash
++
+ .PHONY: check
+ check:  ## Run the test suite
+ 	$(PYTHON) -m pytest -vvv --log-cli-level=info -s --color=yes $(PYTEST_ARGS) tests
+
+From bd3722b7897a740b183947ca105b0c7eed6131f0 Mon Sep 17 00:00:00 2001
+From: Peyton Duncan <dev@peytond.me>
+Date: Tue, 25 Apr 2023 15:55:19 -0600
+Subject: [PATCH 2/6] Extracting out variables, formatting
+
+---
+ Makefile | 9 ++++++++-
+ 1 file changed, 8 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 02c33f9..1d739f9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -2,6 +2,7 @@ PYTHON ?= python
+ CLANG_FORMAT ?= clang-format
+ PRETTIER ?= prettier --no-editorconfig
+ DOCKER_IMAGE ?= pystack
++DOCKER_SRC_DIR ?= /src
+ 
+ # Doc generation variables
+ UPSTREAM_GIT_REMOTE ?= origin
+@@ -15,6 +16,7 @@ cpp_files := $(shell find src/pystack/_pystack -name \*.cpp -o -name \*.h)
+ python_files := $(shell find src tests -name \*.py -not -path '*/\.*')
+ mypy_files := $(shell find src tests -name \*.pyi -not -path '*/\.*')
+ cython_files := $(shell find src tests -name \*.pyx -or -name \*.pxd -not -path '*/\.*')
++pwd := $(shell pwd)
+ 
+ # Use this to inject arbitrary commands before the make targets (e.g. docker)
+ ENV :=
+@@ -41,7 +43,12 @@ docker-build:  ## Build the Docker image
+ 
+ .PHONY: docker-shell
+ docker-shell: docker-build ## Run a shell in the Docker image
+-	docker run -it --rm --cap-add SYS_PTRACE -v $(PWD):/pystack $(DOCKER_IMAGE) bash
++	docker run -it \
++		--rm \
++		--cap-add SYS_PTRACE \
++		-v $(PWD):$(DOCKER_SRC_DIR) \
++		$(DOCKER_IMAGE) \
++		bash
+ 
+ .PHONY: check
+ check:  ## Run the test suite
+
+From f7736705b14fa56abfff7eb10ceb20c1da9fd38e Mon Sep 17 00:00:00 2001
+From: Peyton Duncan <dev@peytond.me>
+Date: Tue, 25 Apr 2023 16:19:46 -0600
+Subject: [PATCH 3/6] Reformatting command
+
+---
+ Makefile | 13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index 1d739f9..fcffa5f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -41,14 +41,19 @@ test-install:  ## Install with test dependencies
+ docker-build:  ## Build the Docker image
+ 	docker build -t $(DOCKER_IMAGE) .
+ 
++##--cap-add SYS_PTRACE
+ .PHONY: docker-shell
+ docker-shell: docker-build ## Run a shell in the Docker image
+-	docker run -it \
++	## Delete any existing container
++	docker rm -f pystack || true
++	## Run the container
++	docker run -it --name pystack --rm \
++		--privileged \
+ 		--rm \
+-		--cap-add SYS_PTRACE \
+-		-v $(PWD):$(DOCKER_SRC_DIR) \
++		-v $(pwd):$(DOCKER_SRC_DIR) \
++		-w $(DOCKER_SRC_DIR) \
+ 		$(DOCKER_IMAGE) \
+-		bash
++		/bin/bash
+ 
+ .PHONY: check
+ check:  ## Run the test suite
+
+From 8226ec97ec998eb14746f712a963b7936e5636f1 Mon Sep 17 00:00:00 2001
+From: Peyton Duncan <dev@peytond.me>
+Date: Tue, 25 Apr 2023 17:04:59 -0600
+Subject: [PATCH 4/6] Improved command that opens the existing container if it
+ exists
+
+---
+ Makefile | 8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+diff --git a/Makefile b/Makefile
+index fcffa5f..168d37e 100644
+--- a/Makefile
++++ b/Makefile
+@@ -44,10 +44,12 @@ docker-build:  ## Build the Docker image
+ ##--cap-add SYS_PTRACE
+ .PHONY: docker-shell
+ docker-shell: docker-build ## Run a shell in the Docker image
+-	## Delete any existing container
+-	docker rm -f pystack || true
++	## If container exists, run bash in it
++	@if docker ps -a | grep -q pystack; then \
++		docker start pystack && docker exec -it pystack /bin/bash; \
++	fi
+ 	## Run the container
+-	docker run -it --name pystack --rm \
++	@docker run -it --name pystack --rm \
+ 		--privileged \
+ 		--rm \
+ 		-v $(pwd):$(DOCKER_SRC_DIR) \
+
+From 72a8ff873554216efddb61b7d8b165fdd95bd395 Mon Sep 17 00:00:00 2001
+From: Peyton Duncan <dev@peytond.me>
+Date: Tue, 25 Apr 2023 17:06:03 -0600
+Subject: [PATCH 5/6] Including Docker RM command
+
+---
+ Makefile | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 168d37e..9c8053a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -41,6 +41,12 @@ test-install:  ## Install with test dependencies
+ docker-build:  ## Build the Docker image
+ 	docker build -t $(DOCKER_IMAGE) .
+ 
++.PHONY: docker-rm
++docker-rm:  ## Remove the Docker image
++	docker kill pystack || true
++	docker rmi $(DOCKER_IMAGE)
++
++
+ ##--cap-add SYS_PTRACE
+ .PHONY: docker-shell
+ docker-shell: docker-build ## Run a shell in the Docker image
+@@ -59,7 +65,7 @@ docker-shell: docker-build ## Run a shell in the Docker image
+ 
+ .PHONY: check
+ check:  ## Run the test suite
+-	$(PYTHON) -m pytest -vvv --log-cli-level=info -s --color=yes $(PYTEST_ARGS) tests
++	$(PYTHON) -m pytest -vvv --log-cli-level=info -s --color=yes --pdb $(PYTEST_ARGS) tests
+ 
+ .PHONY: pycoverage
+ pycoverage:  ## Run the test suite, with Python code coverage
+
+From 1cf218a36c2ca233974cc705b2ff0b78b3d76d4a Mon Sep 17 00:00:00 2001
+From: Peyton Duncan <dev@peytond.me>
+Date: Tue, 25 Apr 2023 17:08:03 -0600
+Subject: [PATCH 6/6] Removed PDB reference from git
+
+---
+ Makefile | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/Makefile b/Makefile
+index 9c8053a..9a7032c 100644
+--- a/Makefile
++++ b/Makefile
+@@ -65,7 +65,7 @@ docker-shell: docker-build ## Run a shell in the Docker image
+ 
+ .PHONY: check
+ check:  ## Run the test suite
+-	$(PYTHON) -m pytest -vvv --log-cli-level=info -s --color=yes --pdb $(PYTEST_ARGS) tests
++	$(PYTHON) -m pytest -vvv --log-cli-level=info -s --color=yes $(PYTEST_ARGS) tests
+ 
+ .PHONY: pycoverage
+ pycoverage:  ## Run the test suite, with Python code coverage
