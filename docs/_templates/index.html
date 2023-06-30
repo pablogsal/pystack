@@ -117,29 +117,32 @@
             <div class="row">
                 <div class="col-lg-4">
                     <img class="rounded-circle rounded-header-image"
-                        src="{{ pathto('_static/images/box.png', 1) }}"
-                        alt="Flame graph screenshot" width="140" height="140">
-                    <h2>Analyze core files</h2>
-                    <p>
-                        pystack knows the stack trace of every single allocation that happens in your code, no
-                        matter how small it is. This lets you to see exactly where your memory is being
-                        allocated and gives you insights on how to optimize your code.
-                    </p>
-                    <p><a class="btn btn-secondary filled-pystack" href="{{ pathto('flamegraph') }}" role="button">View
-                            details &raquo;</a></p>
-                </div><!-- /.col-lg-4 -->
-                <div class="col-lg-4">
-                    <img class="rounded-circle rounded-header-image"
                         src="{{ pathto('_static/images/python.png', 1) }}" alt="Summary reporter screenshot"
                         width="140" height="140">
-                    <h2>Work with live processes</h2>
+                    <h2>Ready for all situations</h2>
                     <p>
-                        pystack does much more than just telling you where your application is spending
-                        memory and which memory is being leaked. For instance, it can help you find wasteful
-                        temporary allocations that you can avoid to speed up your program.
+                        Pystack thrives under extreme conditions, ensuring
+                        accurate analysis and insights. Whether it's
+                        resource-intensive processes, optimized Python
+                        interpreter binaries, or memory-corrupted core dump
+                        files, pystack can deliver comprehensive stack analysis. 
                     </p>
                     <p><a class="btn btn-secondary filled-pystack" href=" {{ pathto('temporary_allocations') }} "
                             role="button">See how &raquo;</a></p>
+                </div><!-- /.col-lg-4 -->
+                <div class="col-lg-4">
+                    <img class="rounded-circle rounded-header-image"
+                        src="{{ pathto('_static/images/box.png', 1) }}"
+                        alt="Flame graph screenshot" width="140" height="140">
+                    <h2>Processes and core files</h2>
+                    <p>
+                        No matter the circumstances, pystack is your reliable
+                        companion for program analysis. Whether you're dealing
+                        with live processes that are frozen or core dump files
+                        from segmentation faults or deadlocks, pystack remains
+                        steadfast and resilient.  </p>
+                    <p><a class="btn btn-secondary filled-pystack" href="{{ pathto('flamegraph') }}" role="button">View
+                            details &raquo;</a></p>
                 </div><!-- /.col-lg-4 -->
                 <div class="col-lg-4">
                     <img class="rounded-circle rounded-header-image"
@@ -147,10 +150,11 @@
                         width="140" height="140">
                     <h2>Prevent regressions</h2>
                     <p>
-                        You can easily integrate pystack into your pytest test suite. Learn where each test is
-                        spending its memory with per-test allocation summaries with useful statistics, or set
-                        limits on how much memory each test is allowed to use to prevent memory regressions!
-                    </p>
+                        You can easily integrate pystack into your pytest test
+                        suite. Learn where each test is spending its memory with
+                        per-test allocation summaries with useful statistics, or
+                        set limits on how much memory each test is allowed to
+                        use to prevent memory regressions!  </p>
                     <p><a class="btn btn-secondary filled-pystack" href="https://pytest-pystack.readthedocs.io/en/latest/"
                             role="button">Discover the plugin &raquo;</a></p>
                 </div><!-- /.col-lg-4 -->
@@ -161,25 +165,27 @@
 
             <div class="row featurette">
                 <div class="col-md-7">
-                    <h2 class="featurette-heading">Native allocation tracking. <span class="text-muted">No more leaks
-                            in C extensions.</span></h2>
+                    <h2 class="featurette-heading">Uncover the secrets of your programs. <span class="text-muted">No more deadlocks
+                            and misterious crashes.</span></h2>
                     <p class="lead">
-                        pystack sees allocations made by C/C++/Rust libraries.
-                        This means that when you use pystack to profile your
-                        Python code, you'll be able to see the entire call
-                        stack, including any calls to C/C++/Rust functions. This can
-                        be incredibly useful for tracking down memory issues, as
-                        it allows you to see exactly where and how memory is
-                        being allocated. Whether you're working
-                        on a complex project with many layers of code, or simply
-                        trying to optimize your Python scripts for better
-                        performance, pystack is an invaluable tool that can help
-                        you understand and improve your code's memory usage.
+                        In normal execution mode, PyStack provides a powerful
+                        tool for inspecting the stack frames of a running Python
+                        process or a Python core dump. It allows developers to
+                        quickly and easily understand the current execution point of
+                        their Python programs without delving into the intricate
+                        details of CPython internals. By attaching to a running
+                        process or analyzing a core dump file, PyStack can print
+                        a stack trace, showing the sequence of function calls
+                        and their corresponding line numbers in the Python code.
+                        This feature is invaluable for debugging and
+                        understanding the runtime behavior of a Python
+                        application, especially when encountering unexpected
+                        errors or crashes.
                     </p>
                 </div>
                 <div class="col-md-5">
                     <img class="featurette-image img-fluid mx-auto reveal_l"
-                        src="{{ pathto('_static/images/native.png', 1) }}" alt="Native mode tracking">
+                        src="{{ pathto('_static/images/stack.png', 1) }}" alt="Native mode tracking">
                 </div>
             </div>
 
@@ -187,21 +193,30 @@
 
             <div class="row featurette">
                 <div class="col-md-7 order-md-2">
-                    <h2 class="featurette-heading">Catch it as it happens! <span class="text-muted">Live memory
-                            profiling.</span></h2>
+                    <h2 class="featurette-heading">No more hidden code! <span class="text-muted">See into native
+                            extensions.</span></h2>
                     <p class="lead">
-                        One of the standout features of pystack is its ability to
-                        provide a live, real-time view of memory allocation.
-                        With the live mode, you can see exactly how memory is
-                        being used as your Python code is executing. This can be
-                        particularly useful for debugging and optimizing your
-                        code, as you can see in real-time how different parts of
-                        your code are impacting memory usage.
+                        PyStack's native mode offers an additional layer of
+                        insight by displaying not only Python function calls but
+                        also native function calls in the stack trace. When
+                        enabled, PyStack replaces calls to Python callables with
+                        frames that show the Python code being executed, rather
+                        than displaying the internal C code used by the
+                        interpreter. This mode allows developers to see the full
+                        stack trace, including calls to C/C++/Rust functions,
+                        while still providing context about the Python code
+                        being executed at each level. Furthermore, PyStack
+                        automatically demangles symbols in the native stack and
+                        can include calls to inlined functions whenever there is
+                        sufficient debug information available. Native mode is
+                        particularly useful when analyzing the interactions
+                        between Python and native code in a mixed-language
+                        application.
                     </p>
                 </div>
                 <div class="col-md-5 order-md-1">
                     <img class="featurette-image img-fluid mx-auto reveal_r"
-                        src="{{ pathto('_static/images/locals.png', 1) }}" alt="Live mode">
+                        src="{{ pathto('_static/images/native.png', 1) }}" alt="Live mode">
                 </div>
             </div>
 
@@ -209,21 +224,24 @@
 
             <div class="row featurette">
                 <div class="col-md-7">
-                    <h2 class="featurette-heading">One log, many analyses. <span class="text-muted">
-                            There's a reporter for everyone!</span></h2>
+                    <h2 class="featurette-heading">Deep Dive into Program State. <span class="text-muted">
+                            See inside function calls!</span></h2>
                     <p class="lead">
-                        One of the great things about pystack is its flexibility
-                        and customizability. After running a memory profiling
-                        session, you can use a wide range of reporters to view
-                        the data in different ways. For example, you can use the
-                        flamegraph reporter to see a visual representation of
-                        the call stack and how memory is being used at each
-                        level. Or, you can use the statistical reporter to see
-                        summary statistics and trends in your memory usage.
-                        And these are just a few of the many reporters available
-                        in pystack - there are many more to choose from, allowing
-                        you to view your data in the way that makes the most
-                        sense for your specific needs.
+                        In locals mode, PyStack goes beyond providing a stack
+                        trace and offers insight into the values of local
+                        variables and function arguments within Python stack
+                        frames. By enabling this mode, developers can obtain a
+                        more detailed understanding of the program state at each
+                        level of the stack. This feature is especially helpful
+                        when trying to diagnose issues related to variable
+                        values or when seeking to understand the flow of data
+                        through different function calls. By examining the local
+                        variables and arguments, developers can gain crucial
+                        insights into the runtime behavior of their Python code
+                        and identify potential sources of errors or unexpected
+                        behavior. Locals mode enhances the debugging
+                        capabilities of PyStack, allowing for a more
+                        comprehensive analysis of Python programs.
                     </p>
                 </div>
                 <div class="col-md-5">
@@ -238,114 +256,17 @@
                     <br>
                     <div class="card-container">
                         <div class="card-columns">
-                            <a href="https://news.ycombinator.com/item?id=31102089" class="card">
+                            <a href="https://www.bloomberg.com/company/stories/bloomberg-publishes-pystack-debugging-tool-python/" class="card">
                                 <div class="card-body">
-                                    <h5 class="card-title">pystack: a memory profiler for Python</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Hacker News - 2022-04-20</h6>
+                                    <h5 class="card-title">Bloomberg publishes PyStack</h5>
+                                    <h6 class="card-subtitle mb-2 text-muted">Bloomberg- 2022-04-19</h6>
                                 </div>
                             </a>
-                            <a href="https://pythonbytes.fm/episodes/show/282/dont-embarrass-me-in-front-of-the-wizards"
+                            <a href="https://talkpython.fm/episodes/show/419/debugging-python-in-production-with-pystack"
                                 class="card">
                                 <div class="card-body">
-                                    <h5 class="card-title">#282: Don't Embarrass Me in Front of The Wizards</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">PythonBytes (podcast) - 2022-05-03</h6>
-                                </div>
-                            </a>
-                            <a href="https://sdtimes.com/softwaredev/sd-times-open-source-project-of-the-week-pystack/"
-                                class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">SD Times Open-Source Project of the Week: pystack</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">SD Times - 2022-05-06</h6>
-                                </div>
-                            </a>
-                            <a href="https://devclass.com/2022/05/12/core-dev-pystack-memory-profiler/" class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">New pystack memory profiler tracks both Python and native code
-                                    </h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">DevClass - 2022-05-12</h6>
-                                </div>
-                            </a>
-                            <a href="https://blog.opensource.org/pystack-project-showcases-why-bloomberg-is-an-open-source-first-company/"
-                                class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">pystack project showcases why Bloomberg is an ‘open source
-                                        first’ company</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Voice of Open Source - 2022-05-17</h6>
-                                </div>
-                            </a>
-                            <a href="https://www.datanami.com/2022/05/18/pystack-shines-a-light-on-python-c-c-memory-problems/"
-                                class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">pystack Shines a Light on Python-C/C++ Memory Problems</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Datanimi - 2022-05-18</h6>
-                                </div>
-                            </a>
-                            <a href="https://console.substack.com/p/console-107?s=r" class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">#107 -- Interview With Pablo of Bloomberg about pystack</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Console - 2022-05-29</h6>
-                                </div>
-                            </a>
-                            <a href="https://realpython.com/podcasts/rpp/128/" class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Episode 128: Using a Memory Profiler in Python & What It Can
-                                        Teach You</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">The Real Python Podcast - 2022-010-7</h6>
-                                </div>
-                            </a>
-                            <a href="https://tryolabs.com/blog/2022/12/26/top-python-libraries-2022" class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Top Python libraries of 2022</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Tyro Labs - 2022-012-26</h6>
-                                </div>
-                            </a>
-                            <a href="https://www.dice.com/career-advice/developer-qa-pablo-galindo-talks-pythons-speedy-future"
-                                class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Developer Q&A: Pablo Galindo Salgado Talks Python's Speedy
-                                        Future</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Dice - 2022-01-05</h6>
-                                </div>
-                            </a>
-                            <a href="https://www.reddit.com/r/Python/comments/u84tjr/bloomberg_just_open_sourced_pystack_a_memory/"
-                                class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Bloomberg just Open sourced pystack a memory profiler for
-                                        Python</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Reddit - 2022-04-20</h6>
-                                </div>
-                            </a>
-                            <a href="https://newsletter.researchcomputingteams.org/archive/research-computing-teams-119-23-apr-2022/"
-                                class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Research Computing Teams #119, 23 Apr 2022</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Research Computing Teams - 2022-04-23</h6>
-                                </div>
-                            </a>
-                            <a href="https://console.substack.com/p/console-102?s=r" class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Console #102 -- Snapdrop, pystack, and Headless Recorder </h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Console - 2022-04-24</h6>
-                                </div>
-                            </a>
-                            <a href="https://www.infoq.com/news/2022/04/bloomberg-pystack-python-profiler/" class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Bloomberg Open-Sources Python Memory Profiler pystack</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">InfoQ - 2022-04-26</h6>
-                                </div>
-                            </a>
-                            <a href="https://thestack.technology/pystack-python-memory-profiler-bloomberg/" class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Check your pystack: Bloomberg open sources tool for Python
-                                        apps</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">The Stack - 2022-04-29</h6>
-                                </div>
-                            </a>
-                            <a href="https://www.marktechpost.com/2022/04/30/bloomberg-open-sources-pystack-a-memory-profiler-that-can-track-memory-allocations-in-python-code-in-native-extension-modules-and-python-interpreter/"
-                                class="card">
-                                <div class="card-body">
-                                    <h5 class="card-title">Bloomberg Open-Sources pystack</h5>
-                                    <h6 class="card-subtitle mb-2 text-muted">Market Tech - 4/30/22</h6>
+                                    <h5 class="card-title">Debugging Python in Production with PyStack</h5>
+                                    <h6 class="card-subtitle mb-2 text-muted">Talk Python (podcast) - 2022-06-14</h6>
                                 </div>
                             </a>
                         </div>
