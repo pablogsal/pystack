@@ -1,11 +1,14 @@
 #pragma once
 
 #include <cstdint>
+#include <fcntl.h>
 #include <list>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <vector>
 
 #include <elf_common.h>
@@ -211,6 +214,8 @@ class CorefileRemoteMemoryManager : public AbstractRemoteMemoryManager
             std::shared_ptr<CoreFileAnalyzer> analyzer,
             std::vector<VirtualMap>& vmaps);
 
+    ~CorefileRemoteMemoryManager() override;
+
     // Methods
     ssize_t copyMemoryFromProcess(remote_addr_t addr, size_t size, void* destination) const override;
 
@@ -227,11 +232,11 @@ class CorefileRemoteMemoryManager : public AbstractRemoteMemoryManager
     std::shared_ptr<CoreFileAnalyzer> d_analyzer;
     std::vector<VirtualMap> d_vmaps;
     std::vector<SimpleVirtualMap> d_shared_libs;
+    char* corefile_data;
+    size_t corefile_size;
 
-    StatusCode getMemoryLocationFromCore(
-            remote_addr_t addr,
-            const std::string** filename,
-            off_t* offset_in_file) const;
+    StatusCode readCorefile(int fd, const char* filename);
+    StatusCode getMemoryLocationFromCore(remote_addr_t addr, off_t* offset_in_file) const;
     StatusCode getMemoryLocationFromElf(
             remote_addr_t addr,
             const std::string** filename,

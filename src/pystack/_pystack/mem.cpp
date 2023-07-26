@@ -344,27 +344,86 @@ CorefileRemoteMemoryManager::CorefileRemoteMemoryManager(
 {
     CoreFileExtractor extractor{d_analyzer};
     d_shared_libs = extractor.ModuleInformation();
+
+    const char* filename = d_analyzer->d_filename.c_str();
+    int fd = open(filename, O_RDONLY);
+
+    StatusCode ret = readCorefile(fd, filename);
+    close(fd);
+
+    if (ret == StatusCode::ERROR) {
+        throw RemoteMemCopyError();
+    }
+}
+
+CorefileRemoteMemoryManager::~CorefileRemoteMemoryManager()
+{
+    if (munmap(corefile_data, corefile_size) == -1) {
+        LOG(ERROR) << "Failed to un-mmap a file " << d_analyzer->d_filename.c_str();
+    }
+}
+
+CorefileRemoteMemoryManager::StatusCode
+CorefileRemoteMemoryManager::readCorefile(int fd, const char* filename)
+{
+    if (fd == -1) {
+        LOG(ERROR) << "Failed to open a file " << filename;
+        return StatusCode::ERROR;
+    }
+
+    struct stat fileInfo = {0};
+
+    if (fstat(fd, &fileInfo) == -1) {
+        LOG(ERROR) << "Failed to get a file size for a file " << filename;
+        return StatusCode::ERROR;
+    }
+
+    if (fileInfo.st_size == 0) {
+        LOG(ERROR) << "File " << filename << " is empty";
+        return StatusCode::ERROR;
+    }
+
+    corefile_size = fileInfo.st_size;
+    corefile_data = reinterpret_cast<char*>(mmap(0, corefile_size, PROT_READ, MAP_PRIVATE, fd, 0));
+
+    if (corefile_data == MAP_FAILED) {
+        LOG(ERROR) << "Failed to mmap a file " << filename;
+        return StatusCode::ERROR;
+    }
+
+    int madvise_result = madvise(corefile_data, corefile_size, MADV_RANDOM);
+
+    if (madvise_result == -1) {
+        LOG(ERROR) << "Madvise for a file " << filename << " failed";
+        return StatusCode::ERROR;
+    }
+
+    return StatusCode::SUCCESS;
 }
 
 ssize_t
 CorefileRemoteMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t size, void* destination)
         const
 {
-    const std::string* filename = nullptr;
     off_t offset_in_file = 0;
 
-    StatusCode ret = getMemoryLocationFromCore(addr, &filename, &offset_in_file);
+    StatusCode ret = getMemoryLocationFromCore(addr, &offset_in_file);
 
-    if (ret == StatusCode::ERROR) {
-        // The memory may be in the data segment of some shared library
-        getMemoryLocationFromElf(addr, &filename, &offset_in_file);
+    if (ret == StatusCode::SUCCESS) {
+        memcpy(destination, corefile_data + offset_in_file, size);
+        return size;
     }
 
-    if (filename == nullptr) {
+    // The memory may be in the data segment of some shared library
+    const std::string* filename = nullptr;
+    ret = getMemoryLocationFromElf(addr, &filename, &offset_in_file);
+
+    if (ret == StatusCode::ERROR) {
         throw InvalidRemoteAddress();
     }
 
     std::ifstream is(*filename, std::ifstream::binary);
+
     if (is) {
         is.seekg(offset_in_file);
         is.read((char*)destination, size);
@@ -372,14 +431,12 @@ CorefileRemoteMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t si
         LOG(ERROR) << "Failed to read memory from file " << *filename;
         throw InvalidRemoteAddress();
     }
+
     return size;
 }
 
 CorefileRemoteMemoryManager::StatusCode
-CorefileRemoteMemoryManager::getMemoryLocationFromCore(
-        remote_addr_t addr,
-        const std::string** filename,
-        off_t* offset_in_file) const
+CorefileRemoteMemoryManager::getMemoryLocationFromCore(remote_addr_t addr, off_t* offset_in_file) const
 {
     auto corefile_it = std::find_if(d_vmaps.cbegin(), d_vmaps.cend(), [&](auto& map) {
         return (map.Start() <= addr && addr <= map.End()) && (map.FileSize() != 0 && map.Offset() != 0);
@@ -390,7 +447,6 @@ CorefileRemoteMemoryManager::getMemoryLocationFromCore(
 
     unsigned long base = corefile_it->Offset() - corefile_it->Start();
     *offset_in_file = base + addr;
-    *filename = &d_analyzer->d_filename;
     return StatusCode::SUCCESS;
 }
 
