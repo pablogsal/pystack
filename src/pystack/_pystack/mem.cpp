@@ -356,13 +356,6 @@ CorefileRemoteMemoryManager::CorefileRemoteMemoryManager(
     }
 }
 
-CorefileRemoteMemoryManager::~CorefileRemoteMemoryManager()
-{
-    if (munmap(corefile_data, corefile_size) == -1) {
-        LOG(ERROR) << "Failed to un-mmap a file " << d_analyzer->d_filename.c_str();
-    }
-}
-
 CorefileRemoteMemoryManager::StatusCode
 CorefileRemoteMemoryManager::readCorefile(int fd, const char* filename)
 {
@@ -384,14 +377,15 @@ CorefileRemoteMemoryManager::readCorefile(int fd, const char* filename)
     }
 
     corefile_size = fileInfo.st_size;
-    corefile_data = reinterpret_cast<char*>(mmap(0, corefile_size, PROT_READ, MAP_PRIVATE, fd, 0));
+    char *data = reinterpret_cast<char*>(mmap(0, corefile_size, PROT_READ, MAP_PRIVATE, fd, 0));
+    corefile_data = std::unique_ptr<char, std::function<void(void*)>>(data, [](char* data) { munmap(data, 0); });
 
-    if (corefile_data == MAP_FAILED) {
+    if (corefile_data.get() == MAP_FAILED) {
         LOG(ERROR) << "Failed to mmap a file " << filename;
         return StatusCode::ERROR;
     }
 
-    int madvise_result = madvise(corefile_data, corefile_size, MADV_RANDOM);
+    int madvise_result = madvise(corefile_data.get(), corefile_size, MADV_RANDOM);
 
     if (madvise_result == -1) {
         LOG(ERROR) << "Madvise for a file " << filename << " failed";
@@ -410,7 +404,7 @@ CorefileRemoteMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t si
     StatusCode ret = getMemoryLocationFromCore(addr, &offset_in_file);
 
     if (ret == StatusCode::SUCCESS) {
-        memcpy(destination, corefile_data + offset_in_file, size);
+        memcpy(destination, corefile_data.get() + offset_in_file, size);
         return size;
     }
 
