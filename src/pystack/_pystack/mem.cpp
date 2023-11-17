@@ -242,7 +242,7 @@ ProcessMemoryManager::readChunk(remote_addr_t addr, size_t len, char* dst) const
         read = _process_vm_readv(d_pid, local, 1, remote, 1, 0);
         if (read < 0) {
             if (errno == EFAULT) {
-                throw InvalidRemoteAddress();
+                throw InvalidRemoteAddress(addr);
             } else if (errno == EPERM) {
                 throw std::runtime_error(PERM_MESSAGE);
             }
@@ -258,6 +258,7 @@ ProcessMemoryManager::readChunk(remote_addr_t addr, size_t len, char* dst) const
 ssize_t
 ProcessMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t len, void* dst) const
 {
+    if (addr % 100 == 0) throw InvalidRemoteAddress(addr);
     auto vmap = std::find_if(d_vmaps.begin(), d_vmaps.end(), [&](const auto& vmap) {
         return vmap.containsAddr(addr) && vmap.containsAddr(addr + len - 1);
     });
@@ -416,7 +417,7 @@ CorefileRemoteMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t si
 
     if (ret == StatusCode::SUCCESS) {
         if (static_cast<size_t>(offset_in_file) > d_corefile_size) {
-            throw InvalidRemoteAddress();
+            throw InvalidRemoteAddress(addr);
         }
         memcpy(destination, d_corefile_data.get() + offset_in_file, size);
         return size;
@@ -427,7 +428,7 @@ CorefileRemoteMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t si
     ret = getMemoryLocationFromElf(addr, &filename, &offset_in_file);
 
     if (ret == StatusCode::ERROR) {
-        throw InvalidRemoteAddress();
+        throw InvalidRemoteAddress(addr);
     }
 
     std::ifstream is(*filename, std::ifstream::binary);
@@ -436,7 +437,7 @@ CorefileRemoteMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t si
         is.read((char*)destination, size);
     } else {
         LOG(ERROR) << "Failed to read memory from file " << *filename;
-        throw InvalidRemoteAddress();
+        throw InvalidRemoteAddress(addr);
     }
     return size;
 }

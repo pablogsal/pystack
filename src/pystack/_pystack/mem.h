@@ -27,10 +27,18 @@ struct RemoteMemCopyError : public std::exception
 
 struct InvalidRemoteAddress : public RemoteMemCopyError
 {
+    InvalidRemoteAddress(uintptr_t address) : addr(address) {
+        std::stringstream stream;
+        stream << "Invalid remote address: " << std::showbase << std::hex << address;
+        msg = stream.str();
+    }
     const char* what() const noexcept override
     {
-        return "Invalid address in remote process";
+      return msg.c_str();
     }
+
+    std::string msg;
+    uintptr_t addr;
 };
 
 struct InvalidCopiedMemory : public RemoteMemCopyError

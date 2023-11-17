@@ -2,7 +2,9 @@ import contextlib
 import enum
 import functools
 import logging
+import signal
 import os
+import sys
 import pathlib
 from typing import Any
 from typing import Callable
@@ -364,7 +366,12 @@ cdef class ProcessManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is RuntimeError:
+            os.kill(self.pid, signal.SIGSTOP)
         self._manager.reset()
+        try_to_create_core_dump(self.pid, exc_val)
+        if exc_type is RuntimeError:
+            os.kill(self.pid, signal.SIGCONT)
 
     cdef shared_ptr[AbstractProcessManager] get_manager(self):
         assert self._manager.get() != NULL
@@ -617,6 +624,99 @@ def _get_process_threads(
     if native_mode == NativeReportingMode.ALL:
         yield from _construct_os_threads(manager, pid, all_tids)
 
+
+
+def try_to_create_core_dump(pid: int, exception) -> None:
+    import subprocess
+
+    # File to store GDB output
+    output_file_path = "crash_report.log"
+
+    def run_command(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE):
+        result = subprocess.run(cmd, stdout=stdout, stderr=stderr, text=True)
+        return result.stdout, result.stderr
+
+    # Try to use gdb to create a core dump
+    gdb_cmd = [
+        "gdb",
+        "-p",
+        str(pid),
+        "-batch",
+        "-ex",
+        "generate-core-file",
+        "-ex",
+        "quit",
+    ]
+    try:
+        LOGGER.info("Trying to create a core dump using gdb")
+
+        # Capture the output of the gdb command
+        gdb_output, _ = run_command(gdb_cmd)
+
+        # Append the GDB output to the file
+        with open(output_file_path, "a") as output_file:
+            output_file.write(gdb_output)
+
+        if os.path.exists(f"core.{pid}"):
+            print("Created core dump at", f"core.{pid}", file=sys.stderr, flush=True)
+
+        gdbscript = pathlib.Path(__file__).parent / "gdbscript.py"
+        cmd = [
+            "gdb",
+            "-batch",
+            "-c",
+            f"core.{pid}",
+            "-e",
+            f"/proc/{pid}/exe",
+            "-nx",
+            "-nw",
+            "-ex=set debuginfod enabled on",
+            f"-ex=source {gdbscript}",
+            "-ex=set max-value-size unlimited",
+            "-ex=print_interp_head",
+            "-ex=thread apply all bt",
+            "-ex=quit",
+        ]
+
+        # Capture the output of the gdb command
+        gdb_output, _ = run_command(cmd)
+
+        # Append the GDB output to the file
+        with open(output_file_path, "a") as output_file:
+            output_file.write(gdb_output)
+
+        # Check if the exception contains "Invalid remote address: addr", parse addr and dump the memory
+        # at that address with gdb
+        if "Invalid remote address" in str(exception):
+            chunks = exception.args[0].split(" ")
+            address = chunks[len(chunks) - 1]
+            cmd = [
+                "gdb",
+                "-batch",
+                "-quiet",
+                "-c",
+                f"core.{pid}",
+                "-e",
+                f"/proc/{pid}/exe",
+                "-nx",
+                "-nw",
+                f"-ex=x/512xb {address}",
+            ]
+
+            # Capture the output of the gdb command
+            gdb_output, _ = run_command(cmd)
+
+            # Append the GDB output to the file
+            with open(output_file_path, "a") as output_file:
+                output_file.write(gdb_output)
+
+            print("Dumping memory at address", address, file=sys.stderr, flush=True)
+
+    except subprocess.CalledProcessError:
+        LOGGER.info("Could not create a core dump using gdb")
+        pass
+
+    print("GDB output saved to:", output_file_path, file=sys.stderr, flush=True)
 
 def get_process_threads(
     pid: int,
