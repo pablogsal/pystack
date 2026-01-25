@@ -7,8 +7,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "corefile.h"
-#include "elf_common.h"
+#ifndef PYSTACK_MACOS
+#    include "corefile.h"
+#    include "elf_common.h"
+#endif
 #include "mem.h"
 
 namespace pystack {
@@ -21,6 +23,12 @@ struct ProcessMemoryMapInfo
     std::optional<VirtualMap> libpython;
 };
 
+#ifdef PYSTACK_MACOS
+// macOS: Parse memory maps using Mach VM APIs
+std::vector<VirtualMap>
+parseMachMaps(pid_t pid);
+#else
+// Linux: Parse /proc/pid/maps
 std::vector<VirtualMap>
 parseProcMaps(pid_t pid);
 
@@ -28,6 +36,7 @@ std::vector<VirtualMap>
 parseCoreFileMaps(
         const std::vector<CoreVirtualMap>& mapped_files,
         const std::vector<CoreVirtualMap>& memory_maps);
+#endif
 
 ProcessMemoryMapInfo
 parseMapInformation(

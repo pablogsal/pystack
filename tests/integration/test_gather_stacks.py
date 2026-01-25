@@ -1,10 +1,15 @@
+import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from pystack.engine import NativeReportingMode
 from pystack.engine import get_process_threads
+
+IS_MACOS = platform.system() == "Darwin"
 from pystack.types import LocationInfo
 from pystack.types import NativeFrame
 from pystack.types import frame_type
@@ -209,7 +214,7 @@ def test_single_thread_stack_native(python, method, blocking, tmpdir):
     assert all("?" not in frame.symbol for frame in eval_frames)
     if any(frame.linenumber == 0 for frame in eval_frames):  # pragma: no cover
         assert all(frame.linenumber == 0 for frame in eval_frames)
-        assert all(frame.path == "???" in frame.path for frame in eval_frames)
+        assert all(frame.path == "???" for frame in eval_frames)
     else:  # pragma: no cover
         assert all(frame.linenumber != 0 for frame in eval_frames)
         assert any(frame.path and "?" not in frame.path for frame in eval_frames)
@@ -268,7 +273,7 @@ def test_multiple_thread_stack_native(python, method, blocking, tmpdir):
     assert all("?" not in frame.symbol for frame in eval_frames)
     if any(frame.linenumber == 0 for frame in eval_frames):  # pragma: no cover
         assert all(frame.linenumber == 0 for frame in eval_frames)
-        assert all(frame.path == "???" in frame.path for frame in eval_frames)
+        assert all(frame.path == "???" for frame in eval_frames)
     else:  # pragma: no cover
         assert all(frame.linenumber != 0 for frame in eval_frames)
         assert any(frame.path and "?" not in frame.path for frame in eval_frames)
@@ -407,6 +412,7 @@ def test_thread_registered_with_python_with_other_threads(tmpdir):
     )
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Thread name resolution not yet implemented on macOS")
 def test_get_thread_name(tmpdir):
     # WHEN
     extension_name = "empty_thread_extension_with_os_threads"

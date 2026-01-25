@@ -2,6 +2,7 @@ import argparse
 import logging
 import os
 import pathlib
+import platform
 import signal
 import sys
 from contextlib import suppress
@@ -21,11 +22,14 @@ from pystack.process import is_gzip
 from . import errors
 from . import print_thread
 from .colors import colored
-from .engine import CoreFileAnalyzer
 from .engine import NativeReportingMode
 from .engine import StackMethod
 from .engine import get_process_threads
-from .engine import get_process_threads_for_core
+
+# Core file support is only available on Linux
+if platform.system() != "Darwin":
+    from .engine import CoreFileAnalyzer
+    from .engine import get_process_threads_for_core
 
 PERMISSION_ERROR_MSG = "Operation not permitted"
 NO_SUCH_PROCESS_ERROR_MSG = "No such process"
@@ -338,6 +342,12 @@ def format_failureinfo_information(failure_info: Dict[str, Any]) -> str:
 
 
 def process_core(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    if platform.system() == "Darwin":
+        parser.error(
+            "Core file analysis is not supported on macOS. "
+            "Only live process analysis (pystack remote <pid>) is available."
+        )
+
     corefile = pathlib.Path(args.core)
     if not corefile.exists():
         parser.error(f"Core {corefile} does not exist")

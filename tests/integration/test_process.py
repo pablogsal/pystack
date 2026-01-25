@@ -1,3 +1,4 @@
+import platform
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -10,6 +11,8 @@ from pystack.engine import get_process_threads
 from pystack.process import is_elf
 from tests.utils import ALL_PYTHONS
 from tests.utils import spawn_child_process
+
+IS_MACOS = platform.system() == "Darwin"
 
 TEST_SINGLE_THREAD_FILE = Path(__file__).parent / "single_thread_program.py"
 TEST_SHUTDOWN_FILE = Path(__file__).parent / "shutdown_program.py"
@@ -57,6 +60,7 @@ def test_detection_of_interpreter_active(python, tmpdir):
     assert status == -1 or is_running is True
 
 
+@pytest.mark.skipif(IS_MACOS, reason="ptrace attachment semantics don't apply on macOS")
 @ALL_PYTHONS
 def test_reattaching_to_already_traced_process(python, tmpdir):
     # GIVEN
@@ -96,9 +100,13 @@ def test_reattaching_to_already_traced_process(python, tmpdir):
 @pytest.mark.parametrize(
     "file, expected",
     [
-        (sys.executable, True),
-        (__file__, False),
-        ("/etc", False),
+        pytest.param(
+            sys.executable,
+            not IS_MACOS,  # ELF on Linux, Mach-O on macOS
+            id="python_executable",
+        ),
+        pytest.param(__file__, False, id="python_source"),
+        pytest.param("/etc", False, id="directory"),
     ],
 )
 def test_elf_checker(file, expected):

@@ -1,13 +1,22 @@
+import platform
 import re
 from pathlib import Path
 
+import pytest
+
 from pystack.engine import NativeReportingMode
 from pystack.engine import get_process_threads
-from pystack.engine import get_process_threads_for_core
 from tests.utils import ALL_PYTHONS
+
+IS_MACOS = platform.system() == "Darwin"
+
 from tests.utils import ALL_PYTHONS_WITH_SYMBOLS
-from tests.utils import generate_core_file
 from tests.utils import spawn_child_process
+
+# Conditionally import core file related items (not available on macOS)
+if not IS_MACOS:
+    from pystack.engine import get_process_threads_for_core
+    from tests.utils import generate_core_file
 
 TEST_GC = Path(__file__).parent / "gc_freeze_program.py"
 TEST_SINGLE_THREAD_FILE = Path(__file__).parent / "single_thread_program.py"
@@ -63,6 +72,7 @@ def test_gc_status_is_reported_when_no_garbage_collecting_in_process(python, tmp
     assert {thread.gc_status for thread in threads} == {""}
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @ALL_PYTHONS_WITH_SYMBOLS
 def test_gc_status_is_reported_when_garbage_collecting_in_core(python, tmpdir):
     # GIVEN
@@ -86,6 +96,7 @@ def test_gc_status_is_reported_when_garbage_collecting_in_core(python, tmpdir):
     assert {thread.gc_status for thread in threads} == {"", "Garbage collecting"}
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @ALL_PYTHONS
 def test_gc_status_is_reported_when_no_garbage_collecting_in_core(python, tmpdir):
     # GIVEN
@@ -138,6 +149,7 @@ def test_gc_status_is_reported_when_garbage_collecting_in_process_no_native(
         assert {thread.is_gc_collecting for thread in threads} == {1}
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @ALL_PYTHONS
 def test_gc_status_is_reported_when_garbage_collecting_in_core_no_native(
     python, tmpdir

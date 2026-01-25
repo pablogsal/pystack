@@ -14,8 +14,10 @@
 #include <optional>
 #include <unordered_set>
 
-#include "corefile.h"
-#include "elf_common.h"
+#ifndef PYSTACK_MACOS
+#    include "corefile.h"
+#    include "elf_common.h"
+#endif
 #include "logging.h"
 #include "maps_parser.h"
 #include "mem.h"
@@ -111,6 +113,7 @@ enum class NativeReportingMode {
     LAST = 2000,
 };
 
+#ifndef PYSTACK_MACOS
 class CoreFileAnalyzerWrapper
 {
   public:
@@ -287,6 +290,7 @@ class CoreFileAnalyzerWrapper
     std::unique_ptr<pystack::CoreFileExtractor> d_extractor;
     std::vector<std::string> d_ignored_libs;
 };
+#endif  // !PYSTACK_MACOS
 
 class ProcessManagerWrapper
 {
@@ -302,6 +306,7 @@ class ProcessManagerWrapper
         return std::make_unique<ProcessManagerWrapper>(std::move(manager));
     }
 
+#ifndef PYSTACK_MACOS
     static std::unique_ptr<ProcessManagerWrapper> create_from_core(
             const std::filesystem::path& core_file,
             const std::filesystem::path& executable,
@@ -317,6 +322,7 @@ class ProcessManagerWrapper
                 lib_path_str);
         return std::make_unique<ProcessManagerWrapper>(std::move(manager));
     }
+#endif
 
     int interpreter_status() const
     {
@@ -370,6 +376,7 @@ copy_memory_from_address(pid_t pid, uintptr_t address, size_t size)
     return nb::steal<nb::bytes>(py_bytes);
 }
 
+#ifndef PYSTACK_MACOS
 nb::object
 get_bss_info(const std::filesystem::path& binary)
 {
@@ -386,6 +393,7 @@ get_bss_info(const std::filesystem::path& binary)
     }
     return nb::none();
 }
+#endif
 
 // Helper struct to hold Python type objects for thread building
 struct PyTypes
@@ -622,6 +630,7 @@ get_process_threads(
     }
 }
 
+#ifndef PYSTACK_MACOS
 nb::object
 get_process_threads_for_core(
         const std::filesystem::path& core_file,
@@ -687,6 +696,7 @@ get_process_threads_for_core(
         throw EngineError(e.what());
     }
 }
+#endif  // !PYSTACK_MACOS
 
 void
 _check_interpreter_shutdown(nb::object manager)
@@ -738,6 +748,7 @@ NB_MODULE(_pystack, m)
             .value("ALL", NativeReportingMode::ALL)
             .value("LAST", NativeReportingMode::LAST);
 
+#ifndef PYSTACK_MACOS
     nb::class_<CoreFileAnalyzerWrapper>(m, "CoreFileAnalyzer")
             .def(nb::init<
                          const std::filesystem::path&,
@@ -754,6 +765,7 @@ NB_MODULE(_pystack, m)
             .def("missing_modules", &CoreFileAnalyzerWrapper::missing_modules)
             .def("extract_module_load_points", &CoreFileAnalyzerWrapper::extract_module_load_points)
             .def("extract_build_ids", &CoreFileAnalyzerWrapper::extract_build_ids);
+#endif
 
     nb::class_<ProcessManagerWrapper>(m, "ProcessManager")
             .def_static(
@@ -761,12 +773,14 @@ NB_MODULE(_pystack, m)
                     &ProcessManagerWrapper::create_from_pid,
                     "pid"_a,
                     "stop_process"_a = true)
+#ifndef PYSTACK_MACOS
             .def_static(
                     "create_from_core",
                     &ProcessManagerWrapper::create_from_core,
                     "core_file"_a,
                     "executable"_a,
                     "lib_search_path"_a = nb::none())
+#endif
             .def("interpreter_status", &ProcessManagerWrapper::interpreter_status)
             .def("is_interpreter_active", &ProcessManagerWrapper::is_interpreter_active)
             .def_prop_ro("pid", &ProcessManagerWrapper::pid)
@@ -784,7 +798,9 @@ NB_MODULE(_pystack, m)
           "size"_a,
           "Copy memory from a remote process");
 
+#ifndef PYSTACK_MACOS
     m.def("get_bss_info", &get_bss_info, "binary"_a, "Get BSS section information from an ELF binary");
+#endif
 
     // Note: We use nb::arg().none() to allow None to be passed explicitly
     m.def(
@@ -817,6 +833,7 @@ NB_MODULE(_pystack, m)
             nb::arg("method").none() = nb::cast(StackMethod::AUTO),
             "Return an iterable of Thread objects from a live process");
 
+#ifndef PYSTACK_MACOS
     m.def(
             "get_process_threads_for_core",
             [](const std::filesystem::path& core_file,
@@ -854,6 +871,7 @@ NB_MODULE(_pystack, m)
             "locals"_a = false,
             nb::arg("method").none() = nb::cast(StackMethod::AUTO),
             "Return an iterable of Thread objects from a core file");
+#endif
 
     m.def("_check_interpreter_shutdown",
           &_check_interpreter_shutdown,

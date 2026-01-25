@@ -1,4 +1,5 @@
 import logging
+import platform
 from pathlib import Path
 from textwrap import dedent
 from unittest.mock import Mock
@@ -7,6 +8,8 @@ from unittest.mock import mock_open
 from unittest.mock import patch
 
 import pytest
+
+IS_MACOS = platform.system() == "Darwin"
 
 from pystack.__main__ import NO_SUCH_PROCESS_ERROR_MSG
 from pystack.__main__ import PERMISSION_ERROR_MSG
@@ -408,6 +411,7 @@ def test_process_remote_error(exception, exval, capsys):
     assert "Oh no!" in capture.err
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_default_without_executable():
     # GIVEN
 
@@ -453,6 +457,7 @@ def test_process_core_default_without_executable():
     ]
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_default_gzip_without_executable():
     # GIVEN
 
@@ -510,6 +515,7 @@ def test_process_core_default_gzip_without_executable():
     gzip_open_mock.assert_called_with(Path("corefile.gz"), "rb")
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_default_without_executable_and_executable_does_not_exist(capsys):
     # GIVEN
 
@@ -535,6 +541,7 @@ def test_process_core_default_without_executable_and_executable_does_not_exist(c
     assert "You can try to provide one" in capture.err
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_executable_not_elf_file(capsys):
     # GIVEN
 
@@ -563,6 +570,7 @@ def test_process_core_executable_not_elf_file(capsys):
     assert INVALID_EXECUTABLE_HELP_TEXT in capture.err
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_default_with_executable():
     # GIVEN
 
@@ -605,6 +613,7 @@ def test_process_core_default_with_executable():
     ]
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @pytest.mark.parametrize(
     "argument, mode",
     [
@@ -653,6 +662,7 @@ def test_process_core_native(argument, mode):
     assert print_thread_mock.mock_calls == [call(thread, mode) for thread in threads]
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_locals():
     # GIVEN
 
@@ -695,6 +705,7 @@ def test_process_core_locals():
     ]
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_with_search_path():
     # GIVEN
 
@@ -744,6 +755,7 @@ def test_process_core_with_search_path():
     ]
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_with_search_root():
     # GIVEN
 
@@ -794,6 +806,7 @@ def test_process_core_with_search_root():
     ]
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_with_not_readable_search_root():
     # GIVEN
 
@@ -818,6 +831,7 @@ def test_process_core_with_not_readable_search_root():
             main()
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_with_invalid_search_root():
     # GIVEN
 
@@ -838,6 +852,7 @@ def test_process_core_with_invalid_search_root():
             main()
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_corefile_does_not_exit():
     # GIVEN
 
@@ -868,6 +883,7 @@ def test_process_core_corefile_does_not_exit():
     print_thread_mock.assert_not_called()
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_executable_does_not_exit():
     # GIVEN
 
@@ -901,6 +917,7 @@ def test_process_core_executable_does_not_exit():
     print_thread_mock.assert_not_called()
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @pytest.mark.parametrize(
     "exception, exval", [(EngineError, 1), (InvalidPythonProcess, 2)]
 )
@@ -940,6 +957,7 @@ def test_process_core_error(exception, exval, capsys):
     assert "Oh no!" in capture.err
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_process_core_exhaustive():
     # GIVEN
 
@@ -1035,6 +1053,7 @@ def test_nocolor_output_at_the_front_for_process():
     assert environ == {"NO_COLOR": "1"}
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_nocolor_output_at_the_front_for_core():
     # GIVEN
 
@@ -1060,6 +1079,7 @@ def test_nocolor_output_at_the_front_for_core():
     assert environ == {"NO_COLOR": "1"}
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @pytest.mark.parametrize("option", ["--no-color", "--verbose"])
 def test_global_options_can_be_placed_at_any_point(option):
     # GIVEN
@@ -1084,6 +1104,7 @@ def test_global_options_can_be_placed_at_any_point(option):
         main()
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_verbose_as_global_options_sets_correctly_the_logger():
     # GIVEN
 
@@ -1135,8 +1156,11 @@ def test_format_failureinfo_information_with_segfault():
 
 def test_format_failureinfo_information_with_signal():
     # GIVEN
+    import signal
+
+    signo = signal.SIGBUS.value
     info = {
-        "si_signo": 7,
+        "si_signo": signo,
         "si_errno": 0,
         "si_code": 0,
         "sender_pid": 1,
@@ -1155,8 +1179,11 @@ def test_format_failureinfo_information_with_signal():
 
 def test_format_failureinfo_information_with_signal_no_sender_pid():
     # GIVEN
+    import signal
+
+    signo = signal.SIGBUS.value
     info = {
-        "si_signo": 7,
+        "si_signo": signo,
         "si_errno": 0,
         "si_code": 0,
         "sender_uid": 0,
@@ -1232,6 +1259,7 @@ def test_format_psinfo():
     assert expected.strip() == result.strip()
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @pytest.mark.parametrize("method", ["extract_ps_info", "extract_failure_info"])
 def test_process_core_does_not_crash_if_core_analyzer_fails(method):
     # GIVEN
@@ -1256,6 +1284,7 @@ def test_process_core_does_not_crash_if_core_analyzer_fails(method):
         main()
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @pytest.mark.parametrize("native", [True, False])
 def test_core_file_missing_modules_are_logged(caplog, native):
     # GIVEN
@@ -1289,6 +1318,7 @@ def test_core_file_missing_modules_are_logged(caplog, native):
     assert record_messages == expected
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @pytest.mark.parametrize("native", [True, False])
 def test_core_file_missing_build_ids_are_logged(caplog, native):
     # GIVEN
@@ -1333,6 +1363,7 @@ def test_core_file_missing_build_ids_are_logged(caplog, native):
     assert record_messages == expected
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_executable_is_not_elf_uses_the_first_map():
     # GIVEN
     argv = ["pystack", "core", "corefile"]

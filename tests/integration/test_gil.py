@@ -1,13 +1,20 @@
+import platform
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from pystack.engine import get_process_threads
-from pystack.engine import get_process_threads_for_core
 from tests.utils import ALL_PYTHONS
-from tests.utils import generate_core_file
+
+IS_MACOS = platform.system() == "Darwin"
+
 from tests.utils import spawn_child_process
+
+# Conditionally import core file related items (not available on macOS)
+if not IS_MACOS:
+    from pystack.engine import get_process_threads_for_core
+    from tests.utils import generate_core_file
 
 TEST_MULTIPLE_THREADS_GIL_FILE = (
     Path(__file__).parent / "multiple_thread_program_gil.py"
@@ -101,6 +108,7 @@ def test_gil_status_single_thread_does_not_hold_the_gil(python, tmpdir):
     assert not thread.holds_the_gil
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @ALL_PYTHONS
 def test_gil_status_one_thread_among_many_holds_the_gil_for_core(python, tmpdir):
     """Generate a core file for a process with multiple threads in which we know
@@ -123,6 +131,7 @@ def test_gil_status_one_thread_among_many_holds_the_gil_for_core(python, tmpdir)
     assert sorted(thread.holds_the_gil for thread in threads) == [0, 0, 0, 1]
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @ALL_PYTHONS
 def test_gil_status_no_thread_among_many_holds_the_gil_for_core(python, tmpdir):
     """Generate a core file for a process with multiple threads in which we know
@@ -146,6 +155,7 @@ def test_gil_status_no_thread_among_many_holds_the_gil_for_core(python, tmpdir):
     assert len(nogil_threads) == 4
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @ALL_PYTHONS
 def test_gil_status_single_thread_holds_the_gil_for_core(python, tmpdir):
     """Generate a core file for a process with a single thread in which we know
@@ -169,6 +179,7 @@ def test_gil_status_single_thread_holds_the_gil_for_core(python, tmpdir):
     assert thread.holds_the_gil
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @ALL_PYTHONS
 def test_gil_status_single_thread_does_not_hold_the_gil_for_core(python, tmpdir):
     """Generate a core file for a process with a single thread in which we know

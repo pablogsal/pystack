@@ -9,12 +9,21 @@
 #include <utility>
 #include <vector>
 
-#include "elf_common.h"
+#ifdef PYSTACK_MACOS
+#    include <mach/mach.h>
+#    include <mach/mach_vm.h>
+#    include <mach/task.h>
+#    include <mach/thread_act.h>
+#    include "macos_unwinder.h"
+#else
+#    include "elf_common.h"
+#    include "unwinder.h"
+#endif
+
 #include "maps_parser.h"
 #include "mem.h"
 #include "native_frame.h"
 #include "pycompat.h"
-#include "unwinder.h"
 #include "version.h"
 
 namespace pystack {
@@ -45,8 +54,18 @@ class ProcessTracer
     std::vector<int> getTids() const;
 
   private:
-    // Data members
+#ifdef PYSTACK_MACOS
+    // macOS: use Mach task port
+    mach_port_t d_task;
+    std::vector<int> d_tids;
+    bool d_suspended;
+
+    void suspendTask();
+    void resumeTask();
+#else
+    // Linux: use ptrace per-thread
     std::unordered_set<int> d_tids;
+#endif
 
     // Methods
     void detachFromProcess();
@@ -80,7 +99,11 @@ class AbstractProcessManager : public std::enable_shared_from_this<AbstractProce
     remote_addr_t findInterpreterStateFromPointer(remote_addr_t pointer) const;
     remote_addr_t findInterpreterStateFromPyRuntime(remote_addr_t runtime_addr) const;
     remote_addr_t findInterpreterStateFromSymbols() const;
+#ifdef PYSTACK_MACOS
+    remote_addr_t findInterpreterStateFromMachOData() const;
+#else
     remote_addr_t findInterpreterStateFromElfData() const;
+#endif
     remote_addr_t findInterpreterStateFromDebugOffsets() const;
     remote_addr_t findSymbol(const std::string& symbol) const;
     ssize_t copyMemoryFromProcess(remote_addr_t addr, size_t size, void* destination) const;
@@ -109,9 +132,14 @@ class AbstractProcessManager : public std::enable_shared_from_this<AbstractProce
     std::optional<VirtualMap> d_heap{std::nullopt};
     std::vector<VirtualMap> d_memory_maps;
     std::unique_ptr<AbstractRemoteMemoryManager> d_manager;
+#ifdef PYSTACK_MACOS
+    mutable std::unique_ptr<MacOSUnwinder> d_unwinder;
+    mutable mach_port_t d_unwinder_task;
+#else
     std::unique_ptr<AbstractUnwinder> d_unwinder;
-    mutable std::unordered_map<std::string, remote_addr_t> d_symbol_cache;
     std::shared_ptr<Analyzer> d_analyzer;
+#endif
+    mutable std::unordered_map<std::string, remote_addr_t> d_symbol_cache;
     int d_major{};
     int d_minor{};
     const python_v* d_py_v{};
@@ -126,7 +154,11 @@ class AbstractProcessManager : public std::enable_shared_from_this<AbstractProce
 
   private:
     void warnIfOffsetsAreMismatched(remote_addr_t addr) const;
+#ifdef PYSTACK_MACOS
+    remote_addr_t findPyRuntimeFromMachO() const;
+#else
     remote_addr_t findPyRuntimeFromElfData() const;
+#endif
     remote_addr_t findDebugOffsetsFromMaps() const;
 
     std::unique_ptr<python_v> loadDebugOffsets(Structure<py_runtime_v>& py_runtime) const;
@@ -150,7 +182,17 @@ class ProcessManager : public AbstractProcessManager
     // Factory method
     static std::shared_ptr<ProcessManager> create(pid_t pid, bool stop_process = true);
 
-    // Constructors
+#ifdef PYSTACK_MACOS
+    // Constructors (macOS version - no ProcessAnalyzer)
+    ProcessManager(
+            pid_t pid,
+            const std::shared_ptr<ProcessTracer>& tracer,
+            std::vector<VirtualMap> memory_maps,
+            std::optional<VirtualMap> main_map,
+            std::optional<VirtualMap> bss,
+            std::optional<VirtualMap> heap);
+#else
+    // Constructors (Linux version - with ProcessAnalyzer)
     ProcessManager(
             pid_t pid,
             const std::shared_ptr<ProcessTracer>& tracer,
@@ -159,6 +201,7 @@ class ProcessManager : public AbstractProcessManager
             std::optional<VirtualMap> main_map,
             std::optional<VirtualMap> bss,
             std::optional<VirtualMap> heap);
+#endif
 
     // Destructors
     virtual ~ProcessManager() = default;
@@ -175,6 +218,7 @@ class ProcessManager : public AbstractProcessManager
     void initializeVersion(pid_t pid, const ProcessMemoryMapInfo& map_info);
 };
 
+#ifndef PYSTACK_MACOS
 class CoreFileProcessManager : public AbstractProcessManager
 {
   public:
@@ -206,4 +250,5 @@ class CoreFileProcessManager : public AbstractProcessManager
     // Methods
     void initializeVersion(const std::string& core_file, const ProcessMemoryMapInfo& map_info);
 };
+#endif  // !PYSTACK_MACOS
 }  // namespace pystack

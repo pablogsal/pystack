@@ -1,9 +1,14 @@
 import logging
+import platform
 import subprocess
 import sys
 from pathlib import Path
 
 from pytest import LogCaptureFixture
+
+# Skip entire module on macOS - core file analysis not supported
+if platform.system() == "Darwin":
+    pytest.skip("Core file analysis is not supported on macOS", allow_module_level=True)
 
 from pystack.engine import CoreFileAnalyzer
 from pystack.engine import StackMethod

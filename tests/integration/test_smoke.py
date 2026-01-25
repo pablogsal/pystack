@@ -1,15 +1,21 @@
+import platform
 import sys
 from pathlib import Path
 
 import pytest
 
-from pystack.engine import CoreFileAnalyzer
+IS_MACOS = platform.system() == "Darwin"
+
 from pystack.engine import NativeReportingMode
 from pystack.engine import StackMethod
 from pystack.engine import get_process_threads
-from pystack.engine import get_process_threads_for_core
-from tests.utils import generate_core_file
 from tests.utils import spawn_child_process
+
+# Conditionally import core file related items (not available on macOS)
+if not IS_MACOS:
+    from pystack.engine import CoreFileAnalyzer
+    from pystack.engine import get_process_threads_for_core
+    from tests.utils import generate_core_file
 from tests.utils import xfail_on_expected_exceptions
 
 TEST_SINGLE_THREAD_FILE = Path(__file__).parent / "single_thread_program.py"
@@ -95,6 +101,7 @@ def test_simple_execution_native(method, tmpdir):
     assert threads is not None
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 @pytest.mark.parametrize("method", CORE_STACK_METHODS)
 def test_simple_execution_for_core(method, tmpdir):
     """Test that we can retrieve the thread state of a single core file.
@@ -116,6 +123,7 @@ def test_simple_execution_for_core(method, tmpdir):
     assert threads is not None
 
 
+@pytest.mark.skipif(IS_MACOS, reason="Core file analysis is not supported on macOS")
 def test_extract_executable_from_core(tmpdir: Path) -> None:
     """Generate a core file for a process with a single thread and check
     that we can extract the executable that was used to create the core file"""

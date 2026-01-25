@@ -15,10 +15,17 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
 find_package(nanobind CONFIG REQUIRED)
 
-# Find libelf and libdw via pkg-config
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(LIBELF REQUIRED libelf)
-pkg_check_modules(LIBDW REQUIRED libdw)
+# Platform detection
+if(APPLE)
+    set(PYSTACK_MACOS TRUE)
+    message(STATUS "Building for macOS - ELF/DWARF support disabled")
+else()
+    set(PYSTACK_MACOS FALSE)
+    # Find libelf and libdw via pkg-config (Linux only)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBELF REQUIRED libelf)
+    pkg_check_modules(LIBDW REQUIRED libdw)
+endif()
 
 # Add the extension module subdirectory
 add_subdirectory(src/pystack/_pystack)

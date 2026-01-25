@@ -10,12 +10,316 @@
 #include <sstream>
 #include <stdexcept>
 #include <unistd.h>
+#include <unordered_map>
+
+#ifdef PYSTACK_MACOS
+#    include <libproc.h>
+#    include <mach/mach.h>
+#    include <mach/mach_vm.h>
+#    include <mach/task_info.h>
+#    include <mach-o/dyld_images.h>
+#    include <mach-o/loader.h>
+#    include <sys/sysctl.h>
+#endif
 
 #include "logging.h"
 
 namespace pystack {
 
 namespace fs = std::filesystem;
+
+#ifdef PYSTACK_MACOS
+
+// Helper structure to store dyld image info
+struct DyldImageInfo
+{
+    uintptr_t load_address;
+    uintptr_t end_address;  // load_address + vmsize from __TEXT segment
+    std::string path;
+};
+
+// Read the Mach-O header from a remote process and extract vmsize from __TEXT segment
+// For non-shared-cache libraries, this gives us the text segment size.
+// The end_address field is used as a hint, but we also use sorted lookup for matching.
+static bool
+getMachOTextSize(mach_port_t task, uintptr_t load_address, uintptr_t& vmsize)
+{
+    vmsize = 0;
+
+    // Read the Mach-O header from the target process
+    struct mach_header_64 header;
+    mach_vm_size_t read_size = 0;
+    kern_return_t kr = mach_vm_read_overwrite(
+            task,
+            load_address,
+            sizeof(header),
+            (mach_vm_address_t)&header,
+            &read_size);
+    if (kr != KERN_SUCCESS || read_size != sizeof(header)) {
+        return false;
+    }
+
+    // Verify it's a 64-bit Mach-O
+    if (header.magic != MH_MAGIC_64) {
+        return false;
+    }
+
+    // Read the load commands
+    uint32_t sizeofcmds = header.sizeofcmds;
+    std::vector<uint8_t> load_commands(sizeofcmds);
+    kr = mach_vm_read_overwrite(
+            task,
+            load_address + sizeof(header),
+            sizeofcmds,
+            (mach_vm_address_t)load_commands.data(),
+            &read_size);
+    if (kr != KERN_SUCCESS || read_size != sizeofcmds) {
+        return false;
+    }
+
+    // Parse load commands to find __TEXT segment vmsize
+    uint32_t offset = 0;
+    for (uint32_t i = 0; i < header.ncmds && offset < sizeofcmds; i++) {
+        struct load_command* cmd = (struct load_command*)(load_commands.data() + offset);
+        if (cmd->cmd == LC_SEGMENT_64) {
+            struct segment_command_64* seg = (struct segment_command_64*)cmd;
+            if (strncmp(seg->segname, "__TEXT", 16) == 0) {
+                vmsize = seg->vmsize;
+                return true;
+            }
+        }
+        offset += cmd->cmdsize;
+    }
+
+    return false;
+}
+
+// Helper to read a single dyld image info
+static bool
+readDyldImageInfo(mach_port_t task, uintptr_t load_address, uintptr_t path_addr, DyldImageInfo& info)
+{
+    info.load_address = load_address;
+    info.end_address = load_address;
+
+    // Read the Mach-O header to get __TEXT vmsize
+    uintptr_t vmsize = 0;
+    if (getMachOTextSize(task, load_address, vmsize)) {
+        info.end_address = load_address + vmsize;
+    }
+
+    // Read the file path string from the target process
+    if (path_addr != 0) {
+        char path_buffer[PATH_MAX];
+        mach_vm_size_t read_size = 0;
+        kern_return_t kr = mach_vm_read_overwrite(
+                task,
+                path_addr,
+                sizeof(path_buffer) - 1,
+                (mach_vm_address_t)path_buffer,
+                &read_size);
+        if (kr == KERN_SUCCESS && read_size > 0) {
+            path_buffer[read_size] = '\0';
+            info.path = std::string(path_buffer);
+        }
+    }
+
+    return true;
+}
+
+// Get all loaded images from dyld_all_image_infos
+// This follows exactly what samply does in enumerate_dyld_images()
+static std::vector<DyldImageInfo>
+getDyldImages(mach_port_t task)
+{
+    std::vector<DyldImageInfo> images;
+
+    // Get dyld_all_image_infos address using task_info
+    struct task_dyld_info dyld_info;
+    mach_msg_type_number_t count = TASK_DYLD_INFO_COUNT;
+    kern_return_t kr = task_info(task, TASK_DYLD_INFO, (task_info_t)&dyld_info, &count);
+    if (kr != KERN_SUCCESS) {
+        LOG(DEBUG) << "task_info(TASK_DYLD_INFO) failed: " << mach_error_string(kr);
+        return images;
+    }
+
+    if (dyld_info.all_image_info_addr == 0) {
+        LOG(DEBUG) << "dyld_all_image_infos address is null";
+        return images;
+    }
+
+    // Read dyld_all_image_infos structure from the target process
+    struct dyld_all_image_infos all_image_infos;
+    mach_vm_size_t read_size = 0;
+    kr = mach_vm_read_overwrite(
+            task,
+            dyld_info.all_image_info_addr,
+            sizeof(all_image_infos),
+            (mach_vm_address_t)&all_image_infos,
+            &read_size);
+    if (kr != KERN_SUCCESS || read_size != sizeof(all_image_infos)) {
+        LOG(DEBUG) << "Failed to read dyld_all_image_infos: " << mach_error_string(kr);
+        return images;
+    }
+
+    // IMPORTANT: Add dyld itself FIRST (exactly like samply does)
+    // dyld is the dynamic linker and is stored separately from the infoArray
+    if (all_image_infos.dyldImageLoadAddress != nullptr) {
+        DyldImageInfo dyld_itself;
+        if (readDyldImageInfo(
+                    task,
+                    (uintptr_t)all_image_infos.dyldImageLoadAddress,
+                    (uintptr_t)all_image_infos.dyldPath,
+                    dyld_itself))
+        {
+            images.push_back(std::move(dyld_itself));
+        }
+    }
+
+    if (all_image_infos.infoArray == nullptr || all_image_infos.infoArrayCount == 0) {
+        LOG(DEBUG) << "dyld_all_image_infos has no images";
+        return images;
+    }
+
+    // Read the image info array
+    uint32_t image_count = all_image_infos.infoArrayCount;
+    std::vector<struct dyld_image_info> image_infos(image_count);
+    kr = mach_vm_read_overwrite(
+            task,
+            (mach_vm_address_t)all_image_infos.infoArray,
+            image_count * sizeof(struct dyld_image_info),
+            (mach_vm_address_t)image_infos.data(),
+            &read_size);
+    if (kr != KERN_SUCCESS) {
+        LOG(DEBUG) << "Failed to read dyld_image_info array: " << mach_error_string(kr);
+        return images;
+    }
+
+    // Extract information for each image
+    for (uint32_t i = 0; i < image_count; i++) {
+        DyldImageInfo info;
+        if (readDyldImageInfo(
+                    task,
+                    (uintptr_t)image_infos[i].imageLoadAddress,
+                    (uintptr_t)image_infos[i].imageFilePath,
+                    info))
+        {
+            images.push_back(std::move(info));
+        }
+    }
+
+    // Sort by load_address (exactly like samply does)
+    std::sort(images.begin(), images.end(), [](const DyldImageInfo& a, const DyldImageInfo& b) {
+        return a.load_address < b.load_address;
+    });
+
+    LOG(DEBUG) << "DYLD: Found " << images.size() << " images";
+    return images;
+}
+
+// macOS implementation using Mach VM APIs
+std::vector<VirtualMap>
+parseMachMaps(pid_t pid)
+{
+    std::vector<VirtualMap> maps;
+
+    // Get task port for the process
+    mach_port_t task;
+    kern_return_t kr = task_for_pid(mach_task_self(), pid, &task);
+    if (kr != KERN_SUCCESS) {
+        LOG(ERROR) << "task_for_pid failed for pid " << pid << ": " << mach_error_string(kr);
+        if (kr == KERN_FAILURE) {
+            throw std::runtime_error(
+                    "Operation not permitted. On macOS, debugging requires either:\n"
+                    "1. Running as root (sudo)\n"
+                    "2. The target process being signed with get-task-allow entitlement\n"
+                    "3. SIP (System Integrity Protection) to be appropriately configured");
+        }
+        throw std::runtime_error(std::string("task_for_pid failed: ") + mach_error_string(kr));
+    }
+
+    // Get dyld images for path lookup (includes system libraries in dyld cache)
+    // This reads Mach-O headers to get vmsize, exactly like samply does
+    auto dyld_images = getDyldImages(task);
+
+    mach_vm_address_t address = 0;
+    mach_vm_size_t size = 0;
+    vm_region_basic_info_data_64_t info;
+    mach_msg_type_number_t info_count;
+    mach_port_t object_name;
+
+    while (true) {
+        info_count = VM_REGION_BASIC_INFO_COUNT_64;
+        kr = mach_vm_region(
+                task,
+                &address,
+                &size,
+                VM_REGION_BASIC_INFO_64,
+                (vm_region_info_t)&info,
+                &info_count,
+                &object_name);
+
+        if (kr != KERN_SUCCESS) {
+            break;  // No more regions
+        }
+
+        // Build permission string (rwxp format like Linux)
+        std::string flags;
+        flags += (info.protection & VM_PROT_READ) ? 'r' : '-';
+        flags += (info.protection & VM_PROT_WRITE) ? 'w' : '-';
+        flags += (info.protection & VM_PROT_EXECUTE) ? 'x' : '-';
+        flags += (info.shared) ? 's' : 'p';
+
+        // Get the file path for this region if it's file-backed
+        std::string pathname;
+        char path_buffer[PROC_PIDPATHINFO_MAXSIZE];
+        int ret = proc_regionfilename(pid, address, path_buffer, sizeof(path_buffer));
+        if (ret > 0) {
+            pathname = std::string(path_buffer);
+        }
+
+        // If proc_regionfilename didn't give us a path, try looking up in dyld images
+        // This handles system libraries in the dyld shared cache
+        // Images are sorted by load_address, so find the library that contains this address
+        if (pathname.empty() && !dyld_images.empty()) {
+            // Binary search to find the last image with load_address <= address
+            auto it = std::upper_bound(
+                    dyld_images.begin(),
+                    dyld_images.end(),
+                    address,
+                    [](uintptr_t addr, const DyldImageInfo& img) { return addr < img.load_address; });
+
+            // upper_bound returns first element > address, so go back one
+            if (it != dyld_images.begin()) {
+                --it;
+                // Check if address is within this library's range
+                if (address >= it->load_address && address < it->end_address) {
+                    pathname = it->path;
+                }
+            }
+        }
+
+        maps.emplace_back(
+                static_cast<uintptr_t>(address),
+                static_cast<uintptr_t>(address + size),
+                static_cast<unsigned long>(size),  // filesize
+                flags,
+                static_cast<unsigned long>(info.offset),
+                "",  // device (not applicable on macOS)
+                0,  // inode (not easily available on macOS)
+                pathname);
+
+        LOG(DEBUG) << std::hex << "Region: " << address << "-" << (address + size) << " " << flags << " "
+                   << pathname;
+
+        address += size;
+    }
+
+    mach_port_deallocate(mach_task_self(), task);
+
+    return maps;
+}
+
+#else  // Linux
 
 // Regex pattern for parsing /proc/pid/maps lines
 // Format: start-end permissions offset dev inode pathname
@@ -69,6 +373,10 @@ parseProcMaps(pid_t pid)
 
     return maps;
 }
+
+#endif  // PYSTACK_MACOS
+
+#ifndef PYSTACK_MACOS
 
 std::vector<VirtualMap>
 parseCoreFileMaps(
@@ -152,6 +460,8 @@ parseCoreFileMaps(
     return result;
 }
 
+#endif  // !PYSTACK_MACOS (for parseCoreFileMaps)
+
 static VirtualMap
 getBaseMap(const std::vector<VirtualMap>& binary_maps)
 {
@@ -165,6 +475,31 @@ getBaseMap(const std::vector<VirtualMap>& binary_maps)
     }
     throw std::runtime_error("No maps available");
 }
+
+#ifdef PYSTACK_MACOS
+
+// macOS: BSS section detection using Mach-O parsing
+static std::optional<VirtualMap>
+getBss(const std::vector<VirtualMap>& elf_maps, uintptr_t load_point)
+{
+    // On macOS, we don't have getSectionInfo for ELF files
+    // We'll return nullopt and fall back to heuristics in the caller
+    (void)load_point;  // unused
+    if (elf_maps.empty()) {
+        return std::nullopt;
+    }
+    // Fallback: look for anonymous writable regions as BSS candidates
+    for (const auto& map : elf_maps) {
+        if (map.Path().empty() && map.Flags().find('r') != std::string::npos
+            && map.Flags().find('w') != std::string::npos)
+        {
+            return map;
+        }
+    }
+    return std::nullopt;
+}
+
+#else  // Linux
 
 static std::optional<VirtualMap>
 getBss(const std::vector<VirtualMap>& elf_maps, uintptr_t load_point)
@@ -213,6 +548,8 @@ getBss(const std::vector<VirtualMap>& elf_maps, uintptr_t load_point)
             0,  // inode
             "");  // path
 }
+
+#endif  // PYSTACK_MACOS (for getBss)
 
 ProcessMemoryMapInfo
 parseMapInformation(
@@ -330,6 +667,13 @@ parseMapInformation(
 ProcessMemoryMapInfo
 parseMapInformationForProcess(pid_t pid, const std::vector<VirtualMap>& maps)
 {
+#ifdef PYSTACK_MACOS
+    char exe_path[PROC_PIDPATHINFO_MAXSIZE];
+    int ret = proc_pidpath(pid, exe_path, sizeof(exe_path));
+    if (ret <= 0) {
+        throw std::runtime_error("Failed to get executable path for pid " + std::to_string(pid));
+    }
+#else
     std::string exe_link = "/proc/" + std::to_string(pid) + "/exe";
     char exe_path[PATH_MAX];
     ssize_t len = readlink(exe_link.c_str(), exe_path, sizeof(exe_path) - 1);
@@ -337,12 +681,21 @@ parseMapInformationForProcess(pid_t pid, const std::vector<VirtualMap>& maps)
         throw std::runtime_error("Failed to read /proc/" + std::to_string(pid) + "/exe");
     }
     exe_path[len] = '\0';
+#endif
     return parseMapInformation(exe_path, maps);
 }
 
 std::optional<std::string>
 getThreadName(pid_t pid, pid_t tid)
 {
+#ifdef PYSTACK_MACOS
+    // On macOS, thread names are not easily accessible for remote processes
+    // We would need task_threads() + thread_info() with THREAD_EXTENDED_INFO
+    // For simplicity, return nullopt and the caller can use the tid as an identifier
+    (void)pid;
+    (void)tid;
+    return std::nullopt;
+#else
     std::string comm_path = "/proc/" + std::to_string(pid) + "/task/" + std::to_string(tid) + "/comm";
     std::ifstream comm_file(comm_path);
     if (!comm_file.is_open()) {
@@ -358,6 +711,7 @@ getThreadName(pid_t pid, pid_t tid)
     }
 
     return name;
+#endif
 }
 
 }  // namespace pystack

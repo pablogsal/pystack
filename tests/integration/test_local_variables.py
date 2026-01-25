@@ -1,13 +1,19 @@
+import platform
 import re
 from pathlib import Path
 
 import pytest
 
 from pystack.engine import get_process_threads
-from pystack.engine import get_process_threads_for_core
 from tests.utils import ALL_PYTHONS
-from tests.utils import generate_core_file
 from tests.utils import spawn_child_process
+
+IS_MACOS = platform.system() == "Darwin"
+
+# Conditionally import core file related items (not available on macOS)
+if not IS_MACOS:
+    from pystack.engine import get_process_threads_for_core
+    from tests.utils import generate_core_file
 
 TEST_SINGLE_THREAD_FILE = Path(__file__).parent / "single_thread_program.py"
 TEST_MULTIPLE_THREADS_FILE = Path(__file__).parent / "multiple_thread_program.py"
@@ -18,16 +24,25 @@ def get_threads_for_process(python, script, tmpdir, locals=True):
         return list(get_process_threads(child_process.pid, locals=locals))
 
 
-def get_threads_for_core(python, script, tmpdir, locals=True):
-    with generate_core_file(python, script, tmpdir) as core_file:
-        return list(get_process_threads_for_core(core_file, python, locals=locals))
+if not IS_MACOS:
+    def get_threads_for_core(python, script, tmpdir, locals=True):
+        with generate_core_file(python, script, tmpdir) as core_file:
+            return list(get_process_threads_for_core(core_file, python, locals=locals))
 
 
-ALL_SOURCES = pytest.mark.parametrize(
-    "generate_threads",
-    [get_threads_for_process, get_threads_for_core],
-    ids=["Process", "Core file"],
-)
+# On macOS, only test process-based analysis (no core files)
+if IS_MACOS:
+    ALL_SOURCES = pytest.mark.parametrize(
+        "generate_threads",
+        [get_threads_for_process],
+        ids=["Process"],
+    )
+else:
+    ALL_SOURCES = pytest.mark.parametrize(
+        "generate_threads",
+        [get_threads_for_process, get_threads_for_core],
+        ids=["Process", "Core file"],
+    )
 
 MAX_OUTPUT_LEN = 80
 

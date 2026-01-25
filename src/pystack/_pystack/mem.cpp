@@ -4,18 +4,25 @@
 #include <fstream>
 #include <ios>
 #include <memory>
-#include <sys/uio.h>
-#include <syscall.h>
 #include <system_error>
 #include <unistd.h>
 #include <utility>
 
-#include "corefile.h"
+#ifdef PYSTACK_MACOS
+#    include <mach/mach.h>
+#    include <mach/mach_vm.h>
+#else
+#    include <sys/uio.h>
+#    include <syscall.h>
+#    include "corefile.h"
+#endif
+
 #include "logging.h"
 #include "mem.h"
 
 namespace pystack {
 
+#ifndef PYSTACK_MACOS
 using elf_unique_ptr = std::unique_ptr<Elf, std::function<void(Elf*)>>;
 
 static ssize_t
@@ -29,6 +36,7 @@ _process_vm_readv(
 {
     return syscall(SYS_process_vm_readv, pid, lvec, liovcnt, rvec, riovcnt, flags);
 }
+#endif
 
 static const std::string PERM_MESSAGE = "Operation not permitted";
 static const size_t CACHE_CAPACITY = 5e+7;  // 50MB
@@ -169,6 +177,84 @@ LRUCache::can_fit(size_t size)
     return d_cache_capacity >= size;
 }
 
+#ifdef PYSTACK_MACOS
+
+ProcessMemoryManager::ProcessMemoryManager(pid_t pid, const std::vector<VirtualMap>& vmaps)
+: d_pid(pid)
+, d_vmaps(vmaps)
+, d_lru_cache(CACHE_CAPACITY)
+, d_task(MACH_PORT_NULL)
+{
+    kern_return_t kr = task_for_pid(mach_task_self(), pid, &d_task);
+    if (kr != KERN_SUCCESS) {
+        LOG(ERROR) << "task_for_pid failed for pid " << pid << ": " << mach_error_string(kr);
+        if (kr == KERN_FAILURE) {
+            throw std::runtime_error(PERM_MESSAGE);
+        }
+        throw std::runtime_error(std::string("task_for_pid failed: ") + mach_error_string(kr));
+    }
+}
+
+ProcessMemoryManager::ProcessMemoryManager(pid_t pid)
+: d_pid(pid)
+, d_lru_cache(CACHE_CAPACITY)
+, d_task(MACH_PORT_NULL)
+{
+    kern_return_t kr = task_for_pid(mach_task_self(), pid, &d_task);
+    if (kr != KERN_SUCCESS) {
+        LOG(ERROR) << "task_for_pid failed for pid " << pid << ": " << mach_error_string(kr);
+        if (kr == KERN_FAILURE) {
+            throw std::runtime_error(PERM_MESSAGE);
+        }
+        throw std::runtime_error(std::string("task_for_pid failed: ") + mach_error_string(kr));
+    }
+}
+
+ProcessMemoryManager::~ProcessMemoryManager()
+{
+    if (d_task != MACH_PORT_NULL) {
+        mach_port_deallocate(mach_task_self(), d_task);
+    }
+}
+
+ssize_t
+ProcessMemoryManager::readChunk(remote_addr_t addr, size_t len, char* dst) const
+{
+    return readChunkMach(addr, len, dst);
+}
+
+ssize_t
+ProcessMemoryManager::readChunkMach(remote_addr_t addr, size_t len, char* dst) const
+{
+    if (d_task == MACH_PORT_NULL) {
+        throw std::runtime_error("Invalid task port");
+    }
+
+    mach_vm_size_t bytes_read = 0;
+    kern_return_t kr = mach_vm_read_overwrite(
+            d_task,
+            static_cast<mach_vm_address_t>(addr),
+            static_cast<mach_vm_size_t>(len),
+            reinterpret_cast<mach_vm_address_t>(dst),
+            &bytes_read);
+
+    if (kr != KERN_SUCCESS) {
+        if (kr == KERN_INVALID_ADDRESS || kr == KERN_PROTECTION_FAILURE) {
+            throw InvalidRemoteAddress();
+        }
+        LOG(ERROR) << "mach_vm_read_overwrite failed: " << mach_error_string(kr);
+        throw std::runtime_error(std::string("Memory read failed: ") + mach_error_string(kr));
+    }
+
+    if (bytes_read != len) {
+        throw InvalidCopiedMemory();
+    }
+
+    return static_cast<ssize_t>(bytes_read);
+}
+
+#else  // Linux
+
 ProcessMemoryManager::ProcessMemoryManager(pid_t pid, const std::vector<VirtualMap>& vmaps)
 : d_pid(pid)
 , d_vmaps(vmaps)
@@ -249,6 +335,8 @@ ProcessMemoryManager::readChunkThroughMemFile(remote_addr_t addr, size_t len, ch
     return static_cast<ssize_t>(len);
 }
 
+#endif  // PYSTACK_MACOS
+
 ssize_t
 ProcessMemoryManager::copyMemoryFromProcess(remote_addr_t addr, size_t len, void* dst) const
 {
@@ -290,6 +378,8 @@ ProcessMemoryManager::isAddressValid(remote_addr_t addr, const VirtualMap& map) 
     }
     return map.Start() <= addr && addr < map.End();
 }
+
+#ifndef PYSTACK_MACOS
 
 CorefileRemoteMemoryManager::CorefileRemoteMemoryManager(
         std::shared_ptr<CoreFileAnalyzer> analyzer,
@@ -511,4 +601,7 @@ CorefileRemoteMemoryManager::isAddressValid(remote_addr_t addr, const VirtualMap
     }
     return map.Start() <= addr && addr < map.Start() + map.Size();
 }
+
+#endif  // !PYSTACK_MACOS
+
 }  // namespace pystack

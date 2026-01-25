@@ -145,9 +145,15 @@ getInterpreterStateAddr(AbstractProcessManager* manager, int method_flags)
             {METHOD_DEBUG_OFFSETS,
              "using debug offsets data",
              [&]() { return manager->findInterpreterStateFromDebugOffsets(); }},
+#ifdef PYSTACK_MACOS
+            {METHOD_ELF_DATA,
+             "using Mach-O data",
+             [&]() { return manager->findInterpreterStateFromMachOData(); }},
+#else
             {METHOD_ELF_DATA,
              "using ELF data",
              [&]() { return manager->findInterpreterStateFromElfData(); }},
+#endif
             {METHOD_SYMBOLS,
              "using symbols",
              [&]() { return manager->findInterpreterStateFromSymbols(); }},

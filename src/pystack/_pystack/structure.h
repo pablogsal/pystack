@@ -41,7 +41,7 @@ inline Structure<OffsetsStruct>::Structure(
         remote_addr_t addr)
 : d_manager(manager)
 , d_addr(addr)
-, d_size(d_manager->offsets().get<OffsetsStruct>().size)
+, d_size(d_manager->offsets().template get<OffsetsStruct>().size)
 , d_buf{}
 {
 }
@@ -68,7 +68,7 @@ template<typename FieldPointer>
 inline remote_addr_t
 Structure<OffsetsStruct>::getFieldRemoteAddress(FieldPointer OffsetsStruct::*field) const
 {
-    offset_t offset = (d_manager->offsets().get<OffsetsStruct>().*field).offset;
+    offset_t offset = (d_manager->offsets().template get<OffsetsStruct>().*field).offset;
     return d_addr + offset;
 }
 
@@ -78,7 +78,7 @@ inline const typename FieldPointer::Type&
 Structure<OffsetsStruct>::getField(FieldPointer OffsetsStruct::*field)
 {
     copyFromRemote();
-    offset_t offset = (d_manager->offsets().get<OffsetsStruct>().*field).offset;
+    offset_t offset = (d_manager->offsets().template get<OffsetsStruct>().*field).offset;
     if (d_size < 0 || (size_t)d_size < sizeof(typename FieldPointer::Type)
         || d_size - sizeof(typename FieldPointer::Type) < offset)
     {

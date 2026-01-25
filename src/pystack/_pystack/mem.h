@@ -12,7 +12,12 @@
 #include <sys/stat.h>
 #include <vector>
 
-#include "elf_common.h"
+#ifdef PYSTACK_MACOS
+#    include <mach/mach.h>
+#    include <mach/mach_vm.h>
+#else
+#    include "elf_common.h"
+#endif
 
 namespace pystack {
 
@@ -164,6 +169,9 @@ class ProcessMemoryManager : public AbstractRemoteMemoryManager
   public:
     explicit ProcessMemoryManager(pid_t pid);
     explicit ProcessMemoryManager(pid_t pid, const std::vector<VirtualMap>& vmaps);
+#ifdef PYSTACK_MACOS
+    ~ProcessMemoryManager();
+#endif
 
     // Methods
     ssize_t copyMemoryFromProcess(remote_addr_t addr, size_t size, void* dst) const override;
@@ -174,14 +182,23 @@ class ProcessMemoryManager : public AbstractRemoteMemoryManager
     pid_t d_pid;
     std::vector<VirtualMap> d_vmaps;
     mutable LRUCache d_lru_cache;
+#ifdef PYSTACK_MACOS
+    mutable mach_port_t d_task;
+#else
     mutable file_unique_ptr d_memfile;
+#endif
 
     // Methods
     ssize_t readChunk(remote_addr_t addr, size_t len, char* dst) const;
+#ifdef PYSTACK_MACOS
+    ssize_t readChunkMach(remote_addr_t addr, size_t len, char* dst) const;
+#else
     ssize_t readChunkDirect(remote_addr_t addr, size_t len, char* dst) const;
     ssize_t readChunkThroughMemFile(remote_addr_t addr, size_t len, char* dst) const;
+#endif
 };
 
+#ifndef PYSTACK_MACOS
 struct SimpleVirtualMap
 {
     uintptr_t start;
@@ -234,4 +251,5 @@ class CorefileRemoteMemoryManager : public AbstractRemoteMemoryManager
             off_t* offset_in_file) const;
     StatusCode initLoadSegments(const std::string& filename) const;
 };
+#endif  // !PYSTACK_MACOS
 }  // namespace pystack

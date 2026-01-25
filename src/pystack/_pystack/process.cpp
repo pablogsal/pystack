@@ -7,12 +7,22 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <sys/ptrace.h>
-#include <sys/wait.h>
 #include <utility>
 #include <vector>
 
-#include "corefile.h"
+#ifdef PYSTACK_MACOS
+#    include <libproc.h>
+#    include <mach/mach.h>
+#    include <mach/mach_vm.h>
+#    include <mach/task.h>
+#    include <mach/thread_act.h>
+#    include "macos_utils.h"
+#else
+#    include <sys/ptrace.h>
+#    include <sys/wait.h>
+#    include "corefile.h"
+#endif
+
 #include "logging.h"
 #include "maps_parser.h"
 #include "mem.h"
@@ -30,6 +40,7 @@ namespace {
 
 static const std::string PERM_MESSAGE = "Operation not permitted";
 
+#ifndef PYSTACK_MACOS
 class DirectoryReader
 {
   public:
@@ -62,6 +73,7 @@ class DirectoryReader
   private:
     DIR* dir_;
 };
+#endif  // !PYSTACK_MACOS
 
 }  // namespace
 namespace pystack {
@@ -133,6 +145,158 @@ parsePyVersionHex(uint64_t version, ParsedPyVersion& parsed)
 }
 
 }  // unnamed namespace
+
+#ifdef PYSTACK_MACOS
+
+// macOS implementation using Mach APIs
+static std::vector<int>
+getProcessTids(pid_t pid)
+{
+    std::vector<int> tids;
+
+    mach_port_t task;
+    kern_return_t kr = task_for_pid(mach_task_self(), pid, &task);
+    if (kr != KERN_SUCCESS) {
+        LOG(ERROR) << "task_for_pid failed for pid " << pid << ": " << mach_error_string(kr);
+        throw std::runtime_error(std::string("task_for_pid failed: ") + mach_error_string(kr));
+    }
+
+    thread_act_array_t threads;
+    mach_msg_type_number_t thread_count;
+    kr = task_threads(task, &threads, &thread_count);
+    if (kr != KERN_SUCCESS) {
+        mach_port_deallocate(mach_task_self(), task);
+        LOG(ERROR) << "task_threads failed: " << mach_error_string(kr);
+        throw std::runtime_error(std::string("task_threads failed: ") + mach_error_string(kr));
+    }
+
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        // Get the thread ID using thread_info
+        thread_identifier_info_data_t thread_id_info;
+        mach_msg_type_number_t info_count = THREAD_IDENTIFIER_INFO_COUNT;
+        kr = thread_info(
+                threads[i],
+                THREAD_IDENTIFIER_INFO,
+                (thread_info_t)&thread_id_info,
+                &info_count);
+
+        if (kr == KERN_SUCCESS) {
+            tids.push_back(static_cast<int>(thread_id_info.thread_id));
+        } else {
+            // Fallback: use the thread port as an identifier
+            tids.push_back(static_cast<int>(threads[i]));
+        }
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
+
+    vm_deallocate(mach_task_self(), (vm_address_t)threads, thread_count * sizeof(thread_act_t));
+    mach_port_deallocate(mach_task_self(), task);
+
+    return tids;
+}
+
+ProcessTracer::ProcessTracer(pid_t pid)
+: d_task(MACH_PORT_NULL)
+, d_suspended(false)
+{
+    kern_return_t kr = task_for_pid(mach_task_self(), pid, &d_task);
+    if (kr != KERN_SUCCESS) {
+        LOG(ERROR) << "task_for_pid failed for pid " << pid << ": " << mach_error_string(kr);
+        if (kr == KERN_FAILURE) {
+            throw std::runtime_error(
+                    "Operation not permitted. On macOS, debugging requires either:\n"
+                    "1. Running as root (sudo)\n"
+                    "2. The target process being signed with get-task-allow entitlement\n"
+                    "3. SIP (System Integrity Protection) to be appropriately configured");
+        }
+        throw std::runtime_error(std::string("task_for_pid failed: ") + mach_error_string(kr));
+    }
+
+    suspendTask();
+
+    // Get thread IDs
+    thread_act_array_t threads;
+    mach_msg_type_number_t thread_count;
+    kr = task_threads(d_task, &threads, &thread_count);
+    if (kr != KERN_SUCCESS) {
+        resumeTask();
+        mach_port_deallocate(mach_task_self(), d_task);
+        d_task = MACH_PORT_NULL;
+        throw std::runtime_error(std::string("task_threads failed: ") + mach_error_string(kr));
+    }
+
+    for (mach_msg_type_number_t i = 0; i < thread_count; i++) {
+        thread_identifier_info_data_t thread_id_info;
+        mach_msg_type_number_t info_count = THREAD_IDENTIFIER_INFO_COUNT;
+        kr = thread_info(
+                threads[i],
+                THREAD_IDENTIFIER_INFO,
+                (thread_info_t)&thread_id_info,
+                &info_count);
+
+        if (kr == KERN_SUCCESS) {
+            d_tids.push_back(static_cast<int>(thread_id_info.thread_id));
+        } else {
+            d_tids.push_back(static_cast<int>(threads[i]));
+        }
+        mach_port_deallocate(mach_task_self(), threads[i]);
+    }
+
+    vm_deallocate(mach_task_self(), (vm_address_t)threads, thread_count * sizeof(thread_act_t));
+
+    LOG(INFO) << "All " << d_tids.size() << " threads stopped";
+}
+
+void
+ProcessTracer::suspendTask()
+{
+    if (d_task != MACH_PORT_NULL && !d_suspended) {
+        kern_return_t kr = task_suspend(d_task);
+        if (kr == KERN_SUCCESS) {
+            d_suspended = true;
+            LOG(INFO) << "Task suspended";
+        } else {
+            LOG(WARNING) << "task_suspend failed: " << mach_error_string(kr);
+        }
+    }
+}
+
+void
+ProcessTracer::resumeTask()
+{
+    if (d_task != MACH_PORT_NULL && d_suspended) {
+        kern_return_t kr = task_resume(d_task);
+        if (kr == KERN_SUCCESS) {
+            d_suspended = false;
+            LOG(INFO) << "Task resumed";
+        } else {
+            LOG(WARNING) << "task_resume failed: " << mach_error_string(kr);
+        }
+    }
+}
+
+void
+ProcessTracer::detachFromProcess()
+{
+    resumeTask();
+    if (d_task != MACH_PORT_NULL) {
+        mach_port_deallocate(mach_task_self(), d_task);
+        d_task = MACH_PORT_NULL;
+    }
+}
+
+ProcessTracer::~ProcessTracer()
+{
+    detachFromProcess();
+}
+
+std::vector<int>
+ProcessTracer::getTids() const
+{
+    return d_tids;
+}
+
+#else  // Linux
 
 static std::vector<int>
 getProcessTids(pid_t pid)
@@ -226,6 +390,8 @@ ProcessTracer::getTids() const
     return {d_tids.begin(), d_tids.end()};
 }
 
+#endif  // PYSTACK_MACOS
+
 AbstractProcessManager::AbstractProcessManager(
         pid_t pid,
         std::vector<VirtualMap>&& memory_maps,
@@ -238,8 +404,10 @@ AbstractProcessManager::AbstractProcessManager(
 , d_heap(std::move(heap))
 , d_memory_maps(std::move(memory_maps))
 , d_manager(nullptr)
+#ifndef PYSTACK_MACOS
 , d_unwinder(nullptr)
 , d_analyzer(nullptr)
+#endif
 {
     if (!d_main_map) {
         throw std::runtime_error("The main interpreter map could not be located");
@@ -634,7 +802,50 @@ AbstractProcessManager::findSymbol(const std::string& symbol) const
 {
     const auto elem = d_symbol_cache.find(symbol);
     if (elem == d_symbol_cache.cend()) {
+#ifdef PYSTACK_MACOS
+        // On macOS, search for symbols in Python-related Mach-O binaries
+        remote_addr_t addr = 0;
+        const char* candidates[] = {"libpython", "python", "Python", nullptr};
+
+        for (const auto& vmap : d_memory_maps) {
+            if (!vmap.isReadable() || !vmap.isExecutable()) {
+                continue;
+            }
+
+            const std::string& path = vmap.Path();
+            if (path.empty()) {
+                continue;
+            }
+
+            // Check if the path matches any Python candidate
+            std::string filename = path;
+            size_t last_slash = path.rfind('/');
+            if (last_slash != std::string::npos) {
+                filename = path.substr(last_slash + 1);
+            }
+
+            bool is_python_binary = false;
+            for (const char** candidate = candidates; *candidate; candidate++) {
+                if (filename.find(*candidate) == 0) {
+                    is_python_binary = true;
+                    break;
+                }
+            }
+
+            if (!is_python_binary) {
+                continue;
+            }
+
+            addr = macos::findSymbolInMachO(path, symbol.c_str(), vmap.Start());
+            if (addr != 0) {
+                LOG(DEBUG) << "Found symbol " << symbol << " at address " << std::hex << addr
+                           << " in " << path;
+                break;
+            }
+        }
+#else
         remote_addr_t addr = d_unwinder->getAddressforSymbol(symbol, d_main_map.value().Path());
+#endif
         d_symbol_cache.emplace(symbol, addr);
         return addr;
     }
@@ -659,11 +870,37 @@ AbstractProcessManager::findInterpreterStateFromSymbols() const
     return 0;
 }
 
+#ifdef PYSTACK_MACOS
+std::vector<NativeFrame>
+AbstractProcessManager::unwindThread(pid_t tid) const
+{
+    // Lazily initialize the unwinder
+    if (!d_unwinder) {
+        // Get a task port for the unwinder
+        kern_return_t kr = task_for_pid(mach_task_self(), d_pid, &d_unwinder_task);
+        if (kr != KERN_SUCCESS) {
+            LOG(WARNING) << "Failed to get task port for unwinding: " << mach_error_string(kr);
+            return {};
+        }
+        d_unwinder = std::make_unique<MacOSUnwinder>(d_unwinder_task, d_memory_maps);
+    }
+
+    // Get the thread port for the given tid
+    thread_act_t thread = d_unwinder->getThreadPort(tid);
+    if (thread == MACH_PORT_NULL) {
+        LOG(WARNING) << "Failed to find thread port for tid " << tid;
+        return {};
+    }
+
+    return d_unwinder->unwindThread(thread);
+}
+#else
 std::vector<NativeFrame>
 AbstractProcessManager::unwindThread(pid_t tid) const
 {
     return d_unwinder->unwindThread(tid);
 }
+#endif
 
 pid_t
 AbstractProcessManager::Pid() const
@@ -713,9 +950,15 @@ void
 AbstractProcessManager::setPythonVersionFromDebugOffsets()
 {
     remote_addr_t pyruntime_addr = findSymbol("_PyRuntime");
+#ifdef PYSTACK_MACOS
+    if (!pyruntime_addr) {
+        pyruntime_addr = findPyRuntimeFromMachO();
+    }
+#else
     if (!pyruntime_addr) {
         pyruntime_addr = findPyRuntimeFromElfData();
     }
+#endif
     if (!pyruntime_addr) {
         pyruntime_addr = findDebugOffsetsFromMaps();
     }
@@ -1332,6 +1575,7 @@ AbstractProcessManager::offsets() const
     return *d_py_v;
 }
 
+#ifndef PYSTACK_MACOS
 remote_addr_t
 AbstractProcessManager::findPyRuntimeFromElfData() const
 {
@@ -1360,6 +1604,71 @@ AbstractProcessManager::findInterpreterStateFromElfData() const
     }
     return findInterpreterStateFromPyRuntime(pyruntime);
 }
+#endif  // !PYSTACK_MACOS
+
+#ifdef PYSTACK_MACOS
+remote_addr_t
+AbstractProcessManager::findPyRuntimeFromMachO() const
+{
+    LOG(INFO) << "Trying to resolve PyInterpreterState from Mach-O data";
+
+    // Look for Python-related binaries in memory maps
+    const char* candidates[] = {"libpython", "python", "Python", nullptr};
+
+    for (const auto& vmap : d_memory_maps) {
+        // Only look at executable regions
+        if (!vmap.isReadable() || !vmap.isExecutable()) {
+            continue;
+        }
+
+        const std::string& path = vmap.Path();
+        if (path.empty()) {
+            continue;
+        }
+
+        // Check if the path matches any Python candidate
+        std::string filename = path;
+        size_t last_slash = path.rfind('/');
+        if (last_slash != std::string::npos) {
+            filename = path.substr(last_slash + 1);
+        }
+
+        bool is_python_binary = false;
+        for (const char** candidate = candidates; *candidate; candidate++) {
+            if (filename.find(*candidate) == 0) {
+                is_python_binary = true;
+                break;
+            }
+        }
+
+        if (!is_python_binary) {
+            continue;
+        }
+
+        LOG(DEBUG) << "Searching for PyRuntime section in: " << path << " at base " << std::hex
+                   << vmap.Start();
+
+        uintptr_t result = macos::searchMachOFileForSection(path, "PyRuntime", vmap.Start());
+        if (result != 0) {
+            LOG(INFO) << "Found PyRuntime at address " << std::hex << result << " in " << path;
+            return result;
+        }
+    }
+
+    LOG(INFO) << "Failed to find PyRuntime section in any Python binary";
+    return 0;
+}
+
+remote_addr_t
+AbstractProcessManager::findInterpreterStateFromMachOData() const
+{
+    remote_addr_t pyruntime = findPyRuntimeFromMachO();
+    if (!pyruntime) {
+        return 0;
+    }
+    return findInterpreterStateFromPyRuntime(pyruntime);
+}
+#endif  // PYSTACK_MACOS
 
 remote_addr_t
 AbstractProcessManager::findInterpreterStateFromDebugOffsets() const
@@ -1399,10 +1708,23 @@ ProcessManager::create(pid_t pid, bool stop_process)
         tracer = std::make_shared<ProcessTracer>(pid);
     }
 
+#ifdef PYSTACK_MACOS
+    auto virtual_maps = parseMachMaps(pid);
+#else
     auto virtual_maps = parseProcMaps(pid);
+#endif
     auto map_info = parseMapInformationForProcess(pid, virtual_maps);
-    auto analyzer = std::make_shared<ProcessAnalyzer>(pid);
 
+#ifdef PYSTACK_MACOS
+    auto manager = std::make_shared<ProcessManager>(
+            pid,
+            tracer,
+            std::move(virtual_maps),
+            getMainMap(map_info),
+            map_info.bss,
+            map_info.heap);
+#else
+    auto analyzer = std::make_shared<ProcessAnalyzer>(pid);
     auto manager = std::make_shared<ProcessManager>(
             pid,
             tracer,
@@ -1411,11 +1733,36 @@ ProcessManager::create(pid_t pid, bool stop_process)
             getMainMap(map_info),
             map_info.bss,
             map_info.heap);
+#endif
 
     manager->initializeVersion(pid, map_info);
     return manager;
 }
 
+#ifdef PYSTACK_MACOS
+ProcessManager::ProcessManager(
+        pid_t pid,
+        const std::shared_ptr<ProcessTracer>& tracer,
+        std::vector<VirtualMap> memory_maps,
+        std::optional<VirtualMap> main_map,
+        std::optional<VirtualMap> bss,
+        std::optional<VirtualMap> heap)
+: AbstractProcessManager(
+        pid,
+        std::move(memory_maps),
+        std::move(main_map),
+        std::move(bss),
+        std::move(heap))
+, d_tracer(tracer)
+{
+    if (d_tracer) {
+        d_tids = d_tracer->getTids();
+    } else {
+        d_tids = getProcessTids(pid);
+    }
+    d_manager = std::make_unique<ProcessMemoryManager>(pid, d_memory_maps);
+}
+#else
 ProcessManager::ProcessManager(
         pid_t pid,
         const std::shared_ptr<ProcessTracer>& tracer,
@@ -1441,6 +1788,7 @@ ProcessManager::ProcessManager(
     d_analyzer = analyzer;
     d_unwinder = std::make_unique<Unwinder>(analyzer);
 }
+#endif
 
 void
 ProcessManager::initializeVersion(pid_t pid, const ProcessMemoryMapInfo& map_info)
@@ -1463,6 +1811,7 @@ ProcessManager::Tids() const
     return d_tids;
 }
 
+#ifndef PYSTACK_MACOS
 std::shared_ptr<CoreFileProcessManager>
 CoreFileProcessManager::create(
         const std::string& core_file,
@@ -1546,5 +1895,6 @@ CoreFileProcessManager::Tids() const
 {
     return d_tids;
 }
+#endif  // !PYSTACK_MACOS
 
 }  // namespace pystack
