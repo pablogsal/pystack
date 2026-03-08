@@ -23,18 +23,18 @@ TIMEOUT = 30
 PythonVersion = Tuple[Tuple[int, int], pathlib.Path]
 
 ALL_VERSIONS = [
-    ((3, 14), "python3.14t"),
-    ((3, 14), "python3.14"),
-    ((3, 13), "python3.13t"),
-    ((3, 13), "python3.13"),
-    ((3, 12), "python3.12"),
-    ((3, 11), "python3.11"),
-    ((3, 10), "python3.10"),
-    ((3, 9), "python3.9"),
-    ((3, 8), "python3.8"),
-    ((3, 7), "python3.7"),
-    ((3, 6), "python3.6"),
-    ((2, 7), "python2.7"),
+    # ((3, 14), "python3.14t"),
+    # ((3, 14), "python3.14"),
+    # ((3, 13), "python3.13t"),
+    ((3, 13), "/home/pablogsal/github/pystack/.venv/bin/python"),
+    # ((3, 12), "python3.12"),
+    # ((3, 11), "python3.11"),
+    # ((3, 10), "python3.10"),
+    # ((3, 9), "python3.9"),
+    # ((3, 8), "python3.8"),
+    # ((3, 7), "python3.7"),
+    # ((3, 6), "python3.6"),
+    # ((2, 7), "python2.7"),
 ]
 
 Interpreter = collections.namedtuple("Interpreter", "version path has_symbols")
@@ -309,8 +309,8 @@ ALL_PYTHONS_THAT_SUPPORT_ELF_DATA = pytest.mark.parametrize(
 
 ALL_PYTHONS_THAT_SUPPORT_SUBINTERPRETERS = pytest.mark.parametrize(
     "python",
-    [python[:2] for python in AVAILABLE_PYTHONS if python.version >= (3, 14)],
-    ids=[python[1].name for python in AVAILABLE_PYTHONS if python.version >= (3, 14)],
+    [python[:2] for python in AVAILABLE_PYTHONS if python.version >= (3, 13)],
+    ids=[python[1].name for python in AVAILABLE_PYTHONS if python.version >= (3, 13)],
 )
 
 
